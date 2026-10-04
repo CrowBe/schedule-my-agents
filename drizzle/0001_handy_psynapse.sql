@@ -1,0 +1,1 @@
+ALTER TABLE `watches` ADD `sync_until` integer DEFAULT 0 NOT NULL;
