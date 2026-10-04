@@ -6,9 +6,9 @@ Checked 4 October 2026 (Australia/Sydney). Status terms deliberately separate do
 
 | Capability | Evidence | Result / remaining check |
 | --- | --- | --- |
-| Arbitrary HTTPS routes | Sites bundled Worker entrypoint wraps the framework fetch handler. App handles `/api/*` and `/mcp` there. Production build succeeds. | Route code supported. An unauthenticated provider request through the private Site authentication gate is **not verified**. Watch creation is blocked by default. |
+| Arbitrary HTTPS routes | Sites bundled Worker entrypoint wraps the framework fetch handler. App handles `/api/*` and `/mcp` there. Production build succeeds. | Route code supported. Hosted unauthenticated `POST /api/google/webhook` returned **HTTP 401** with an HTML response on the final production URL. Provider ingress is blocked at the hosting boundary. Watch creation remains blocked. |
 | Google OAuth initiation/callback | Worker routes, server secret bindings, PKCE/state/cookie implementation; integration test exchanges fake Google tokens and proves owner binding/replay rejection. | Locally verified. Real Google client and redirect/session test pending. The callback is `/api/google/callback`, avoiding Sites' reserved `/callback`. |
-| Persistent storage | Sites persistence guidance specifies D1 logical binding and generated Drizzle migrations. `DB` manifest binding and migrations included. SQLite tests cover owner-scoped persisted grants and snapshots. | Locally verified. Hosted migrations and persistence must be confirmed at publication. |
+| Persistent storage | Sites persistence guidance specifies D1 logical binding and generated Drizzle migrations. `DB` manifest binding and migrations included. SQLite tests cover owner-scoped persisted grants and snapshots. | Locally verified; live D1 overview after publication confirms all five migrated tables on `DB`. Cross-session real Google data remains pending. |
 | Secrets | Sites `update_environment_variables` supports `is_secret`; application reads Worker env only. OAuth credentials are encrypted before D1 persistence. | Documented and source-checked. No Google credentials supplied/configured for this run. |
 | Background execution | Allowed hosting manifest fields and current Sites tool surface expose D1/R2 and cloud-task automations, but no app-controlled durable per-occurrence timer or Worker alarm binding. | **Unverified / unavailable through reviewed surface**, not a claim that underlying Workers lacks alarms. No JS timers, cron, polling or ChatGPT scheduled-task workaround added. |
 | Outbound HTTPS | Worker runtime supports `fetch`; Google adapter uses bounded requests to fixed Google origins, denies redirects. | Fake-HTTP tested. Live Google round-trip pending credentials. General fetch alone does not establish a safe MCP callback transport. |
@@ -26,12 +26,16 @@ TypeScript checking, ESLint and the production Worker build pass. These checks *
 
 Site identity: `appgprj_6ac22de0956c8191a45d5b1bb86fd5e4`.
 
-Pre-publication checkpoint: local mock sign-in redirects, setup UI configuration-pending state, `/api/status`, and generated migrations were verified against the running Worker/D1 preview. The production publication and database checks are reported with delivery. OAuth credentials are still required. Do not set `GOOGLE_WEBHOOK_VERIFIED=true` from a local or authenticated route check.
+Local mock sign-in redirects, setup UI configuration-pending state, `/api/status`, and generated migrations were verified against the running Worker/D1 preview.
+
+Private publication succeeded. Final production URL: `https://schedule-my-agents.bennycrow91.chatgpt.site`. Sites reported `has_mcp: true`. Live `DB` overview returned `calendars`, `connections`, `events`, `oauth_states`, and `watches`, confirming production migration application. An unauthenticated webhook POST returned HTTP 401 and HTML rather than the application's JSON notification validation response. This confirms the ingress blocker for the current private deployment.
+
+The provisional origin returned at registration differed from the final URL. `SITE_ORIGIN` and Google redirect instructions were updated to use the actual production origin. OAuth credentials are still required. Do not set `GOOGLE_WEBHOOK_VERIFIED=true` from a local or authenticated route check.
 
 ## Smallest next step and conditional fallback
 
 1. Configure Google OAuth secrets and test the real redirect flow, discovery and persisted consent.
-2. Verify a public, unauthenticated route **without changing the Site audience**. Google webhooks cannot send a ChatGPT session cookie or arbitrary bearer header. The reviewed Sites bypass-token facility requires explicit user request; no token was requested or manufactured here.
+2. Resolve the observed HTTP 401 at the private Site boundary and verify a public, unauthenticated route **without changing the Site audience**. Google webhooks cannot send a ChatGPT session cookie or arbitrary bearer header. The reviewed Sites bypass-token facility requires explicit user request; no token was requested or manufactured here.
 3. If Sites cannot exempt a single provider route, the smallest possible external addition is a narrow HTTPS ingress relay validating Google channel credentials and forwarding through an approved Site service-access path. That path must be verified first; do not broaden Site access or invent user identity.
 4. Confirm a Site-native durable timer, watch-renewal facility and callback-safe outbound transport. If unavailable, the smallest extra component would be one durable occurrence/watch dispatcher with an outbox; its authentication and data minimization need an explicit contract. No fallback is provisioned in this commit.
 5. Only then implement/persist MCP subscriptions and emit `calendar.event.starting`, and demonstrate a timed occurrence waking a Work Cloud chat. Until then the hypothesis remains unvalidated.

@@ -48,7 +48,7 @@ The starter uses a mock ChatGPT identity in development only. Direct local API r
 
 1. Enable the Google Calendar API in a Google Cloud project.
 2. Configure the OAuth consent screen and test user. Create a **Web application** OAuth client.
-3. Register this exact redirect URI: `https://schedule-my-agents.red-wasp-7440.chatgpt.site/api/google/callback`.
+3. Register this exact redirect URI: `https://schedule-my-agents.bennycrow91.chatgpt.site/api/google/callback`.
 4. Set runtime variables through Sites and redeploy:
 
 | Variable | Purpose |
