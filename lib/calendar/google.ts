@@ -12,7 +12,8 @@ export function normalize(calendarId: string, item: GoogleEvent): CalendarEvent 
 }
 export async function tokenRequest(env: Environment, values: Record<string, string>, http: Fetch) {
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) throw new AppError(503, 'Google OAuth is not configured.');
-  const response = await http('https://oauth2.googleapis.com/token', { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10_000),
+  // Workers supports manual/follow redirects. Never follow credential-bearing requests.
+  const response = await http('https://oauth2.googleapis.com/token', { method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(10_000),
     body: new URLSearchParams({ ...values, client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET }) });
   if (!response.ok) throw new AppError(502, 'Google authorization failed. Reconnect Google if access was revoked.');
   const tokens = await response.json() as { access_token?: string; refresh_token?: string; scope?: string };
@@ -20,9 +21,13 @@ export async function tokenRequest(env: Environment, values: Record<string, stri
   return tokens;
 }
 export class GoogleCalendar implements CalendarProvider {
-  constructor(private accessToken: string, private http: Fetch) {}
+  private http: Fetch;
+  constructor(private accessToken: string, http: Fetch) {
+    // Call native fetch as a function, without making this adapter its receiver.
+    this.http = (input, init) => http(input, init);
+  }
   private async call(path: string, init: RequestInit = {}) {
-    const response = await this.http(`${ROOT}${path}`, { ...init, redirect: 'error', signal: AbortSignal.timeout(10_000),
+    const response = await this.http(`${ROOT}${path}`, { ...init, redirect: 'manual', signal: AbortSignal.timeout(10_000),
       headers: { Authorization: `Bearer ${this.accessToken}`, 'Content-Type': 'application/json' } });
     if (!response.ok) throw new AppError(response.status === 403 || response.status === 404 ? 403 : 502, 'Google Calendar request failed. Check calendar access and reconnect if needed.');
     return response.status === 204 ? {} : response.json();

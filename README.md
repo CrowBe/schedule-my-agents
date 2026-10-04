@@ -2,7 +2,7 @@
 
 Hypothesis: an existing calendar can become the native scheduling interface for an AI agent through MCP Events, without a second task scheduler UI.
 
-**First vertical slice: Google OAuth → discover → explicit calendar consent → watch → validated notification → upcoming canonical events in D1.** The real Google adapter and HTTP routes are implemented. Automated integration tests exercise this chain against SQLite and a fake provider. Live Google authorization and watch delivery are pending credentials and hosted ingress verification. This is not yet the event-start/ChatGPT wake-up demo.
+**First vertical slice: Google OAuth → discover → explicit calendar consent → watch → validated notification → upcoming canonical events in D1.** The real Google adapter and HTTP routes are implemented. Automated integration tests exercise this chain against SQLite and a fake provider, with OAuth/discovery regressions in the actual Workers runtime. The live Google client and secrets are configured; the real callback/discovery retry and hosted webhook ingress remain unverified. This is not yet the event-start/ChatGPT wake-up demo.
 
 ## Architecture
 
