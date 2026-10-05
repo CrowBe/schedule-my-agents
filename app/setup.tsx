@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 type Calendar = { id: string; summary: string; accessRole: string; enabled: boolean };
-type Status = { checkedAt: number; connected: boolean; oauthReady: boolean; webhookVerified: boolean; eventStartReady: boolean; watches: { calendar_id: string; status: string; expiration: number; synced_at: number | null }[] };
+type Status = { checkedAt: number; connected: boolean; oauthReady: boolean; webhookVerified: boolean; eventStartReady: boolean; watches: { calendar_id: string; status: string; expiration: number; synced_at: number | null; sync_failed: number }[] };
 export default function Home() {
   const [status, setStatus] = useState<Status | null>(null);
   const [calendars, setCalendars] = useState<Calendar[]>([]);
@@ -37,7 +37,7 @@ export default function Home() {
         {status?.connected && calendars.length === 0 && <div className="empty">No accessible calendars found.</div>}
         <ul>{calendars.map(calendar => {
           const watch = status?.watches.find(w => w.calendar_id === calendar.id && w.status === 'active');
-          return <li key={calendar.id}><div className="calendar-main"><strong>{calendar.summary}</strong><span className="muted">{calendar.enabled ? 'Enabled by you' : 'Disabled'}</span></div><div className="controls"><button disabled={busy || calendar.accessRole === 'freeBusyReader'} onClick={() => action(calendar.enabled ? '/api/calendars/disable' : '/api/calendars/enable', calendar.id)}>{calendar.enabled ? 'Disable' : 'Enable'}</button>{calendar.enabled && <button disabled={busy || !status?.webhookVerified} onClick={() => action('/api/calendars/watch', calendar.id)}>{watch ? 'Renew watch' : 'Start watch'}</button>}</div>{watch && <p className="watch">{watch.expiration <= (status?.checkedAt ?? 0) ? 'Watch expired' : 'Watch expires'} {new Date(watch.expiration).toLocaleString()}{watch.synced_at ? ` · Last sync ${new Date(watch.synced_at).toLocaleString()}` : ''}</p>}</li>;
+          return <li key={calendar.id}><div className="calendar-main"><strong>{calendar.summary}</strong><span className="muted">{calendar.enabled ? 'Enabled by you' : 'Disabled'}</span></div><div className="controls"><button disabled={busy || calendar.accessRole === 'freeBusyReader'} onClick={() => action(calendar.enabled ? '/api/calendars/disable' : '/api/calendars/enable', calendar.id)}>{calendar.enabled ? 'Disable' : 'Enable'}</button>{calendar.enabled && <button disabled={busy || !status?.webhookVerified} onClick={() => action('/api/calendars/watch', calendar.id)}>{watch ? 'Renew watch' : 'Start watch'}</button>}{watch && <button disabled={busy || watch.expiration <= (status?.checkedAt ?? 0)} onClick={() => action('/api/calendars/resync', calendar.id)}>Resync now</button>}</div>{watch && watch.sync_failed > 0 && <p role="alert">Last sync failed. Use Resync now to fetch the latest calendar state.</p>}{watch && <p className="watch">{watch.expiration <= (status?.checkedAt ?? 0) ? 'Watch expired' : 'Watch expires'} {new Date(watch.expiration).toLocaleString()}{watch.synced_at ? ` · Last sync ${new Date(watch.synced_at).toLocaleString()}` : ''}</p>}</li>;
         })}</ul>
       </section>
     </div>

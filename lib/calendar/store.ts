@@ -37,7 +37,7 @@ export class Store {
     await this.db!.batch([
       this.statement(`DELETE FROM events WHERE owner = ? AND calendar_id = ? AND ${guard}`, watch.owner, watch.calendar_id, ...args),
       ...events.map(event => this.statement(`INSERT OR REPLACE INTO events (owner, calendar_id, provider_event_id, payload) SELECT ?, ?, ?, ? WHERE ${guard}`, watch.owner, watch.calendar_id, event.providerEventId, JSON.stringify(event), ...args)),
-      this.statement(`UPDATE watches SET synced_at = ? WHERE id = ? AND ${guard}`, now, watch.id, ...args),
+      this.statement(`UPDATE watches SET synced_at = ?, sync_failed = CASE WHEN sync_failed = 2 THEN 1 ELSE 0 END WHERE id = ? AND ${guard}`, now, watch.id, ...args),
     ]);
   }
 }
