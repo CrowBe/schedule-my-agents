@@ -45,7 +45,7 @@ export class CalendarService {
         return json({ checkedAt: this.now(), connected: Boolean(await this.store.connection(owner)), oauthReady: Boolean(this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET && this.env.TOKEN_ENCRYPTION_KEY && this.env.SITE_ORIGIN),
           webhookVerified: this.env.GOOGLE_WEBHOOK_VERIFIED === 'true', eventStartReady: false,
           enabled: await this.store.all('SELECT calendar_id, summary FROM calendars WHERE owner = ? AND enabled = 1', owner),
-          watches: await this.store.all('SELECT calendar_id, status, expiration, synced_at FROM watches WHERE owner = ? AND status != \'revoked\'', owner) });
+          watches: await this.store.all('SELECT calendar_id, status, expiration, synced_at, sync_failed FROM watches WHERE owner = ? AND status != \'revoked\'', owner) });
       }
       if (path === '/api/google/connect' && request.method === 'POST') {
         this.mutation(request);
@@ -94,6 +94,15 @@ export class CalendarService {
           try { await (await this.provider(owner)).stopWatchingCalendar(watch.id, watch.resource_id); } catch { stopped = false; }
         }
         return json({ enabled: false, providerStopComplete: stopped });
+      }
+      if (path === '/api/calendars/resync' && request.method === 'POST') {
+        this.mutation(request);
+        const calendarId = await this.calendarId(request);
+        const calendar = await this.store.requireEnabled(owner, calendarId);
+        const watch = await this.store.first<WatchRow>("SELECT * FROM watches WHERE owner = ? AND calendar_id = ? AND generation = ? AND status = 'active' AND expiration > ? ORDER BY expiration DESC LIMIT 1", owner, calendarId, calendar.generation, this.now());
+        if (!watch) throw new AppError(409, 'No active watch. Start or renew the calendar watch first.');
+        await this.sync(watch);
+        return json({ calendarId, synchronized: true });
       }
       if (path === '/api/calendars/watch' && request.method === 'POST') {
         this.mutation(request); return await this.watch(owner, await this.calendarId(request));
@@ -151,13 +160,23 @@ export class CalendarService {
       throw error;
     }
   }
-  private async sync(watch: WatchRow, provider: CalendarProvider) {
+  private async sync(watch: WatchRow, provider?: CalendarProvider) {
     await this.store.requireEnabled(watch.owner, watch.calendar_id, watch.generation);
-    const lock = await this.store.first<{id: string}>("UPDATE watches SET sync_until = ? WHERE id = ? AND sync_until <= ? AND status = 'active' RETURNING id", this.now() + 180_000, watch.id, this.now());
-    if (!lock) throw new AppError(503, 'Calendar synchronization is already in progress.');
+    const lock = await this.store.first<{id: string}>("UPDATE watches SET sync_until = ?, sync_failed = 0 WHERE id = ? AND sync_until <= ? AND status = 'active' RETURNING id", this.now() + 180_000, watch.id, this.now());
+    if (!lock) {
+      // Preserve a recovery warning even when the in-flight fetch later succeeds.
+      await this.store.run("UPDATE watches SET sync_failed = 2 WHERE id = ? AND status = 'active'", watch.id);
+      throw new AppError(503, 'Calendar synchronization is already in progress. Use Resync now after it completes.');
+    }
     try {
-      const events = await provider.syncEvents(watch.calendar_id, this.now());
+      const events = await (provider ?? await this.provider(watch.owner)).syncEvents(watch.calendar_id, this.now());
       await this.store.replaceEvents(watch, events, this.now());
+      await this.store.requireEnabled(watch.owner, watch.calendar_id, watch.generation);
+      const current = await this.store.first<WatchRow>('SELECT * FROM watches WHERE id = ?', watch.id);
+      if (current?.status !== 'active' || current.expiration <= this.now()) throw new AppError(409, 'Watch expired or was revoked during synchronization.');
+    } catch (error) {
+      await this.store.run('UPDATE watches SET sync_failed = 1 WHERE id = ?', watch.id);
+      throw error;
     } finally {
       await this.store.run('UPDATE watches SET sync_until = 0 WHERE id = ?', watch.id);
     }
@@ -173,8 +192,7 @@ export class CalendarService {
     if (watch.status === 'pending' && state === 'sync') return new Response(null, { status: 204 });
     if (watch.resource_id !== resource || watch.status !== 'active') throw new AppError(403, 'Notification resource does not match.');
     if (watch.last_message && BigInt(number) <= BigInt(watch.last_message)) return new Response(null, { status: 204 });
-    const provider = await this.provider(watch.owner);
-    try { await this.sync(watch, provider); } catch (error) {
+    try { await this.sync(watch); } catch (error) {
       if (error instanceof AppError && error.status === 403) await this.store.revoke(watch.owner, watch.calendar_id, random());
       throw error;
     }

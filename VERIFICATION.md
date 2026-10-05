@@ -1,6 +1,31 @@
-# Platform and slice verification
+# Verification checkpoint
 
-Checked 5 October 2026 (Australia/Sydney). Status terms deliberately separate documented capabilities, local proof and live hosted evidence.
+Verified 5 October 2026 (Australia/Sydney), issue #2 PR source. The changed recovery UI/schema are local and awaiting PR review; hosted evidence refers to live version 3.
+
+| Boundary | Evidence | Result |
+| --- | --- | --- |
+| Local browser → API → D1 → UI | Isolated app at port 3102, migrated local D1; `/api/status` returned disconnected/configuration-pending with no watches; rendered Connect Google disabled and empty calendars; browser console had no errors | Pass for unconfigured setup |
+| Hosted browser → Google discovery → persisted consent → UI | Google connected; Personal enabled; three other calendars disabled; Start watch disabled; no browser errors; D1 readback one enabled grant, zero watches/events | Pass for existing setup checkpoint; no fresh OAuth authorization performed |
+| Workers → real Google adapter → fake provider → D1 | E2E OAuth/cookie/PKCE, default-disabled discovery, explicit enable, hashed watch token/resource/expiry, initial sync, create/edit snapshots, cancellation, failure/resync, duplicate/out-of-order messages, disable and disconnect | Pass with fake provider; no external networking |
+| SQLite service races and authorization | Initial notification before watch response, consent revocation, missing/cross-owner identity, CSRF, expired watches, failed fetch retaining snapshot/cursor, concurrent notification preserving recovery warning | Pass |
+| Anonymous Google ingress → hosting → application | Hosted forged POST returned 401/HTML | Blocked before Worker |
+| Existing service access → application validation | Hosted forged POST returned application 403; ownerless status and MCP remained 401 | Forwarding path verified; direct Google delivery still blocked |
+
+See [docs/private-ingress.md](docs/private-ingress.md) for redacted request IDs and the conditional relay contract. No audience, credential or runtime gate changes were made. No live watch or calendar event was created, edited or cancelled.
+
+## Explicit recovery
+
+`POST /api/calendars/resync` requires the signed-in owner, matching origin, current grant and an active unexpired watch. It fetches current provider state without creating a new watch. Failed sync preserves the prior snapshot/message cursor and marks the watch for recovery. A notification rejected during an in-flight sync leaves a recovery warning even if that fetch succeeds. The UI offers Resync now and surfaces that warning; a successful uncontended recovery clears it. Disable/disconnect prevent in-flight work from restoring event contents. Watch expiry requires Start/Renew watch instead.
+
+This is bounded manual recovery, not guaranteed unattended convergence or automatic renewal. The snapshot window does not advance without sync. Event-start scheduling, MCP subscriptions/callback delivery and ChatGPT wake-up remain unimplemented.
+
+## Checks
+
+21 tests pass, including four Workers tests. Typechecking, lint and production build pass. The generated additive migration applied successfully to isolated local D1. The hosted ingress probe deliberately exits 1 because direct ingress is blocked. GitHub CI results are attached to the PR.
+
+# Historical first-publication notes
+
+These earlier notes are retained for provenance. The current checkpoint above supersedes their pending OAuth/discovery status.
 
 ## Capability checks
 

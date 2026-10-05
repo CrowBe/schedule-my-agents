@@ -147,3 +147,79 @@ test('Google adapter follows pagination, expands recurrence and limits stored fi
   const adapter=new GoogleCalendar('access',async(url)=>{ calls.push(String(url)); const parsed=new URL(String(url)); assert.equal(parsed.searchParams.get('singleEvents'),'true'); assert.ok(parsed.searchParams.get('timeMax')); return Response.json(parsed.searchParams.has('pageToken')? {items:[{id:'cancelled',status:'cancelled'},{id:'all-day',start:{date:'2026-10-05'}}]} : {items:[{id:'instance1',summary:'Review',attendees:[{email:'private'}],start:{dateTime:'2026-10-04T13:00:00Z'}}],nextPageToken:'next'}); });
   const events=await adapter.syncEvents('personal',Date.parse('2026-10-04T12:00:00Z')); assert.equal(events.length,1); assert.equal(calls.length,2); assert.ok(!JSON.stringify(events).includes('attendees'));
 });
+
+test('failed push retains snapshot and message cursor; explicit recovery fetches final provider state', async () => {
+  const f = fixture();
+  await f.request('/api/calendars/enable', { calendarId: 'personal' });
+  await f.request('/api/calendars/watch', { calendarId: 'personal' });
+  await f.webhook(undefined, { 'x-goog-message-number': '8' });
+  const sync = f.provider.syncEvents;
+  f.provider.syncEvents = async () => { throw new Error('provider unavailable'); };
+  assert.equal((await f.webhook(undefined, { 'x-goog-message-number': '12' })).status, 503);
+  const row = f.sql.prepare('SELECT last_message, sync_failed, sync_until FROM watches').get()!;
+  assert.equal(row.last_message, '8'); assert.equal(row.sync_failed, 1); assert.equal(row.sync_until, 0);
+  assert.equal(f.sql.prepare('SELECT count(*) n FROM events').get()!.n, 1);
+  const status = await (await f.request('/api/status')).json() as { watches: { sync_failed: number }[] };
+  assert.equal(status.watches[0].sync_failed, 1);
+  f.provider.syncEvents = sync;
+  f.setEvents([]); // The provider's final state includes cancellation, even without a retry.
+  assert.equal((await f.request('/api/calendars/resync', { calendarId: 'personal' })).status, 200);
+  assert.equal(f.sql.prepare('SELECT count(*) n FROM events').get()!.n, 0);
+  assert.equal(f.sql.prepare('SELECT sync_failed FROM watches').get()!.sync_failed, 0);
+  const count = f.syncs.length;
+  assert.equal((await f.webhook(undefined, { 'x-goog-message-number': '7' })).status, 204);
+  assert.equal(f.syncs.length, count);
+  assert.equal((await f.webhook(undefined, { 'x-goog-message-number': '12' })).status, 204);
+  assert.equal(f.sql.prepare('SELECT last_message FROM watches').get()!.last_message, '12');
+});
+test('explicit recovery requires current owner, origin, grant and unexpired watch', async () => {
+  const f = fixture();
+  await f.request('/api/calendars/enable', { calendarId: 'personal' });
+  assert.equal((await f.request('/api/calendars/resync', { calendarId: 'personal' })).status, 409);
+  await f.request('/api/calendars/watch', { calendarId: 'personal' });
+  assert.equal((await f.request('/api/calendars/resync', { calendarId: 'personal' }, 'bob')).status, 403);
+  assert.equal((await f.request('/api/calendars/resync', { calendarId: 'personal' }, '')).status, 401);
+  assert.equal((await f.service().handle(new Request(f.env.SITE_ORIGIN + '/api/calendars/resync', {
+    method: 'POST', headers: { origin: 'https://evil.example', 'oai-authenticated-user-id': 'alice' }, body: JSON.stringify({ calendarId: 'personal' }),
+  }))).status, 403);
+  f.sql.prepare('UPDATE watches SET expiration = ?').run(f.now - 1);
+  assert.equal((await f.request('/api/calendars/resync', { calendarId: 'personal' })).status, 409);
+  await f.request('/api/calendars/disable', { calendarId: 'personal' });
+  assert.equal((await f.request('/api/calendars/resync', { calendarId: 'personal' })).status, 403);
+});
+test('revocation during explicit recovery cannot restore snapshot or grant', async () => {
+  const f = fixture();
+  await f.request('/api/calendars/enable', { calendarId: 'personal' });
+  await f.request('/api/calendars/watch', { calendarId: 'personal' });
+  f.provider.syncEvents = async () => {
+    await f.request('/api/calendars/disable', { calendarId: 'personal' });
+    return [normalize('personal', { id: 'late', start: { dateTime: '2026-10-04T14:00:00Z' } })!];
+  };
+  assert.equal((await f.request('/api/calendars/resync', { calendarId: 'personal' })).status, 403);
+  assert.equal(f.sql.prepare('SELECT count(*) n FROM events').get()!.n, 0);
+  assert.equal((await f.webhook()).status, 403);
+});
+
+test('overlapping notification leaves recovery warning after in-flight snapshot commits', async () => {
+  const f = fixture();
+  await f.request('/api/calendars/enable', { calendarId: 'personal' });
+  await f.request('/api/calendars/watch', { calendarId: 'personal' });
+  const sync = f.provider.syncEvents;
+  let release!: () => void;
+  let entered!: () => void;
+  const fetching = new Promise<void>(resolve => { entered = resolve; });
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  f.provider.syncEvents = async (...args) => { entered(); await blocked; return sync(...args); };
+  const first = f.webhook(undefined, { 'x-goog-message-number': '5' });
+  await fetching;
+  assert.equal((await f.webhook(undefined, { 'x-goog-message-number': '9' })).status, 503);
+  release();
+  assert.equal((await first).status, 204);
+  assert.equal(f.sql.prepare('SELECT sync_failed FROM watches').get()!.sync_failed, 1);
+  assert.equal(f.sql.prepare('SELECT last_message FROM watches').get()!.last_message, '5');
+  f.provider.syncEvents = sync;
+  f.setEvents([]);
+  assert.equal((await f.request('/api/calendars/resync', { calendarId: 'personal' })).status, 200);
+  assert.equal(f.sql.prepare('SELECT sync_failed FROM watches').get()!.sync_failed, 0);
+  assert.equal(f.sql.prepare('SELECT count(*) n FROM events').get()!.n, 0);
+});
