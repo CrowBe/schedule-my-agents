@@ -16,6 +16,8 @@ export class Store {
   }
   async disconnect(owner: string) {
     await this.db!.batch([
+      this.statement('DELETE FROM subscriptions WHERE owner = ?', owner),
+      this.statement('DELETE FROM subscription_attempts WHERE owner = ?', owner),
       this.statement('DELETE FROM connections WHERE owner = ?', owner),
       this.statement('DELETE FROM oauth_states WHERE owner = ?', owner),
       this.statement('DELETE FROM events WHERE owner = ?', owner),
@@ -28,6 +30,8 @@ export class Store {
     await this.db!.batch([
       this.statement('UPDATE calendars SET enabled = 0, generation = ? WHERE owner = ? AND calendar_id = ?', generation, owner, id),
       this.statement("UPDATE watches SET status = 'revoked' WHERE owner = ? AND calendar_id = ?", owner, id),
+      this.statement('DELETE FROM subscriptions WHERE owner = ? AND calendar_id = ?', owner, id),
+      this.statement('DELETE FROM subscription_attempts WHERE owner = ? AND calendar_id = ?', owner, id),
       this.statement('DELETE FROM events WHERE owner = ? AND calendar_id = ?', owner, id),
       this.statement('DELETE FROM occurrence_outbox WHERE owner = ? AND calendar_id = ?', owner, id),
     ]);

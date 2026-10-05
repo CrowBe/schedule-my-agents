@@ -160,3 +160,40 @@ test('Workers E2E: OAuth, consent, push create/edit/cancel, failure recovery and
     assert.equal(await db.prepare('SELECT * FROM connections').first(), null);
   } finally { await mf.dispose(); }
 });
+
+test('Workers MCP subscription lifecycle with test-only callback transport and runtime restart', async () => {
+  const { outputFiles } = await build({
+    stdin: { contents: `import { CalendarService } from './lib/calendar/service.ts';
+      export default { fetch(request, env) {
+        // Test transport only; no production fetch adapter is installed.
+        const callbackTransport = { async post(url, body, headers) {
+          const key = await crypto.subtle.importKey('raw', new Uint8Array(32).fill(115), {name:'HMAC',hash:'SHA-256'}, false, ['sign']);
+          const bytes = await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(headers['webhook-id']+'.'+headers['webhook-timestamp']+'.'+body));
+          if (headers['webhook-signature'] !== 'v1,'+btoa(String.fromCharCode(...new Uint8Array(bytes)))) throw new Error('Invalid signature');
+          return Response.json({challenge:JSON.parse(body).challenge});
+        }};
+        return new CalendarService(env, request.headers.get('test-transport') ? { callbackTransport } : {}).handle(request);
+      }};`, resolveDir: process.cwd(), sourcefile: 'subscription-worker.ts' },
+    bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022',
+  });
+  const mf = new Miniflare({ modules:true, script:outputFiles[0].text, compatibilityDate:'2026-05-15', compatibilityFlags:['nodejs_compat'], cf:false, d1Databases:{DB:'subscription-test'}, bindings:{TOKEN_ENCRYPTION_KEY:btoa('a'.repeat(32))} });
+  try {
+    const db=await mf.getD1Database('DB');
+    for(const file of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort()) for(const statement of readFileSync('drizzle/'+file,'utf8').split('--> statement-breakpoint').filter(s=>s.trim())) await db.prepare(statement).run();
+    await db.prepare("INSERT INTO connections VALUES ('alice','encrypted',0)").run();
+    await db.prepare("INSERT INTO calendars VALUES ('alice','personal','Personal',1,'g1')").run();
+    const params={name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example.com/callback',secret:'whsec_'+btoa('s'.repeat(32))}};
+    const rpc=async(method:string,owner='alice',transport=true)=> {
+      const response=await mf.dispatchFetch('https://example.chatgpt.site/mcp',{method:'POST',headers:{'oai-authenticated-user-id':owner,...(transport?{'test-transport':'true'}:{})},body:JSON.stringify({id:1,method,params})});
+      return await response.json() as {result?:{id:string};error?:{code:number;data?:{reason:string}}};
+    };
+    assert.equal((await rpc('events/subscribe','alice',false)).error?.data?.reason,'transport_unavailable');
+    const first=await rpc('events/subscribe'); assert.ok(first.result?.id,JSON.stringify(first));
+    await mf.setOptions({ modules:true, script:outputFiles[0].text, compatibilityDate:'2026-05-15', compatibilityFlags:['nodejs_compat'], cf:false, d1Databases:{DB:'subscription-test'}, bindings:{TOKEN_ENCRYPTION_KEY:btoa('a'.repeat(32))} });
+    assert.equal((await rpc('events/subscribe')).result?.id,first.result.id);
+    assert.equal((await rpc('events/subscribe','bob')).error?.code,-32001);
+    await rpc('events/unsubscribe'); await rpc('events/unsubscribe');
+    assert.equal(await (await mf.getD1Database('DB')).prepare('SELECT id FROM subscriptions').first(),null);
+    assert.deepEqual(await (await mf.dispatchFetch('https://example.chatgpt.site/mcp',{method:'POST',headers:{'oai-authenticated-user-id':'alice'},body:JSON.stringify({id:2,method:'events/list'})})).json(),{jsonrpc:'2.0',id:2,result:{events:[]}});
+  } finally { await mf.dispose(); }
+});

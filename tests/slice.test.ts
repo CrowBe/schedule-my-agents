@@ -71,7 +71,7 @@ test('newly shared calendars fail closed; enable requires actual calendar access
 test('user isolation applies to watches, MCP discovery and subscriptions', async () => {
   const f = fixture(); await f.request('/api/calendars/enable', {calendarId:'personal'});
   assert.equal((await f.request('/api/calendars/watch', {calendarId:'personal'}, 'bob')).status, 403);
-  const denied = JSON.parse(await (await f.request('/mcp', {id:1,method:'events/subscribe',params:{arguments:{calendarId:'personal'}}}, 'bob')).text()); assert.equal(denied.error.code, -32001);
+  const denied = JSON.parse(await (await f.request('/mcp', {id:1,method:'events/subscribe',params:{name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example.com/callback',secret:'whsec_'+btoa('s'.repeat(32))}}}, 'bob')).text()); assert.equal(denied.error.code, -32001);
   const tools = JSON.parse(await (await f.request('/mcp', {id:2,method:'tools/call',params:{name:'enabled_calendars'}}, 'bob')).text()); assert.equal(tools.result.content[0].text, '[]');
 });
 test('forged, wrong-resource, replayed and expired notifications do not synchronize', async () => {
@@ -114,7 +114,8 @@ test('unverified hosted ingress and event-start delivery fail closed', async () 
   const f = fixture(); f.env.GOOGLE_WEBHOOK_VERIFIED = 'false'; await f.request('/api/calendars/enable', {calendarId:'personal'});
   assert.equal((await f.request('/api/calendars/watch', {calendarId:'personal'})).status, 503); assert.equal(f.channels.length,0);
   const events = JSON.parse(await (await f.request('/mcp', {id:1,method:'events/list'})).text()); assert.deepEqual(events.result.events, []);
-  const subscribed = JSON.parse(await (await f.request('/mcp', {id:2,method:'events/subscribe',params:{arguments:{calendarId:'personal'}}})).text()); assert.equal(subscribed.error.code,-32601);
+  await f.env.DB!.prepare("INSERT INTO connections VALUES ('alice','encrypted',0)").run();
+  const subscribed = JSON.parse(await (await f.request('/mcp', {id:2,method:'events/subscribe',params:{name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example.com/callback',secret:'whsec_'+btoa('s'.repeat(32))}}})).text()); assert.equal(subscribed.error.code,-32015); assert.equal(subscribed.error.data.reason,'transport_unavailable');
 });
 test('CSRF and missing identity are rejected', async () => {
   const f=fixture();

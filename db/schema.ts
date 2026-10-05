@@ -9,3 +9,13 @@ export const occurrenceOutbox = sqliteTable('occurrence_outbox', {
   providerEventId: text('provider_event_id').notNull(), dueAt: integer('due_at').notNull(), createdAt: integer('created_at').notNull(),
   expiresAt: integer('expires_at').notNull(), payload: text('payload').notNull(), status: text('status').notNull().default('pending'),
 }, t => [index('idx_occurrence_outbox_created_at').on(t.createdAt), index('idx_occurrence_outbox_owner_calendar').on(t.owner, t.calendarId)]);
+
+export const subscriptions = sqliteTable('subscriptions', {
+  id: text('id').primaryKey(), owner: text('owner').notNull(), calendarId: text('calendar_id').notNull(), generation: text('generation').notNull(),
+  callbackUrl: text('callback_url').notNull(), secret: text('secret').notNull(), previousSecret: text('previous_secret'), rotationUntil: integer('rotation_until'),
+  expiresAt: integer('expires_at').notNull(), verifiedAt: integer('verified_at').notNull(), revision: text('revision').notNull(),
+}, t => [index('idx_subscriptions_owner_calendar').on(t.owner, t.calendarId)]);
+// Revisions invalidate in-flight verification on unsubscribe, including first-time creation.
+export const subscriptionAttempts = sqliteTable('subscription_attempts', {
+  id: text('id').primaryKey(), owner: text('owner').notNull(), calendarId: text('calendar_id').notNull(), revision: text('revision').notNull(), expiresAt: integer('expires_at').notNull(),
+});

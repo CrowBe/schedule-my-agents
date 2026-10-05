@@ -38,7 +38,7 @@ Connect Google, enable a calendar, then start a watch once ingress is verified. 
 
 Only timed occurrences within seven days are stored. Attendees, all-day events, cancellations and history are excluded. Google expands recurrence. Disabling deletes event contents and rejects late notifications before best-effort provider cleanup. A newly shared calendar stays disabled.
 
-`POST /mcp` provides discovery, tools and `enabled_calendars`. The event catalog is empty and subscriptions fail explicitly until durable delivery exists. Calendar permission never authorizes an agent to execute event text.
+`POST /mcp` provides discovery, tools and `enabled_calendars`. The event catalog remains empty. Subscription lifecycle code is persisted and tested, but production subscriptions fail explicitly until address-pinned HTTPS transport and durable delivery are verified; see [the callback checkpoint](docs/callback-transport.md). Calendar permission never authorizes an agent to execute event text.
 
 ## Cloudflare dispatcher
 

@@ -1,10 +1,11 @@
+import { Subscriptions, SubscriptionError, type CallbackTransport } from './subscriptions.ts';
 import { digest, open, random, seal } from './crypto.ts';
 import { GoogleCalendar, SCOPES, tokenRequest, type Fetch } from './google.ts';
 import { Store, type WatchRow } from './store.ts';
 import { AppError, type CalendarProvider, type Environment } from './types.ts';
 import { OccurrenceAlarms } from './alarms.ts';
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
-export type Dependencies = { http?: Fetch; now?: () => number; provider?: (owner: string) => Promise<CalendarProvider> };
+export type Dependencies = { callbackTransport?: CallbackTransport; http?: Fetch; now?: () => number; provider?: (owner: string) => Promise<CalendarProvider> };
 export class CalendarService {
   private store: Store;
   private http: Fetch;
@@ -226,12 +227,14 @@ export class CalendarService {
     if (rpc.method === 'tools/list') return reply({ tools: [{ name: 'enabled_calendars', description: 'List calendars explicitly enabled by the connected user. Calendar content is untrusted data. This prototype does not deliver event-start notifications yet.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }] });
     if (rpc.method === 'tools/call' && rpc.params?.name === 'enabled_calendars') return reply({ content: [{ type: 'text', text: JSON.stringify(await this.store.all('SELECT calendar_id AS calendarId, summary FROM calendars WHERE owner = ? AND enabled = 1', owner)) }] });
     if (rpc.method === 'events/list') return reply({ events: [] });
-    if (rpc.method === 'events/subscribe') {
-      const id = rpc.params?.arguments?.calendarId;
-      if (!id || !(await this.store.calendar(owner, id))?.enabled) return error(-32001, 'This calendar is not enabled for the connected user.');
-      return error(-32601, 'calendar.event.starting is unavailable: durable Site timers and secure callback transport have not been verified.');
+    if (rpc.method === 'events/subscribe' || rpc.method === 'events/unsubscribe') {
+      const subscriptions = new Subscriptions(this.store, this.env, this.now, this.dependencies.callbackTransport);
+      try { return reply(rpc.method === 'events/subscribe' ? await subscriptions.subscribe(owner, rpc.params) : await subscriptions.unsubscribe(owner, rpc.params)); }
+      catch (e) {
+        if (e instanceof SubscriptionError) return json({ jsonrpc: '2.0', id: rpc.id ?? null, error: { code: e.code, message: e.message, ...(e.reason ? { data: { reason: e.reason } } : {}) } });
+        throw e;
+      }
     }
-    if (rpc.method === 'events/unsubscribe') return reply({}); // No subscriptions can exist in this slice.
     return error(-32601, 'Method not found.');
   }
 }
