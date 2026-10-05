@@ -1,6 +1,6 @@
 # Schedule my agents
 
-Use Google Calendar as the scheduling interface for an agent through a publicly reachable ChatGPT Site with authenticated setup and owner-scoped calendar data. This prototype currently provides Google OAuth, calendar discovery, explicit consent, watch/sync code and an owner-scoped MCP calendar-list tool. Event-start delivery is planned.
+Use Google Calendar as the scheduling interface for an agent through a publicly reachable ChatGPT Site with authenticated setup and owner-scoped calendar data. This prototype currently provides Google OAuth, calendar discovery, explicit consent, watch/sync code and an owner-scoped MCP calendar-list tool. Opaque durable start alarms and Google revalidation produce due work; subscriber delivery is planned.
 
 Live OAuth/discovery, persisted consent, real watch creation and Google push create/edit/delete synchronization are verified. The user authorized public hosting to unblock Google ingress; setup and calendar data remain authenticated and owner scoped. See [VERIFICATION.md](VERIFICATION.md) for current evidence and [docs/private-ingress.md](docs/private-ingress.md) for issue #2.
 
@@ -39,3 +39,9 @@ Connect Google, enable a calendar, then start a watch once ingress is verified. 
 Only timed occurrences within seven days are stored. Attendees, all-day events, cancellations and history are excluded. Google expands recurrence. Disabling deletes event contents and rejects late notifications before best-effort provider cleanup. A newly shared calendar stays disabled.
 
 `POST /mcp` provides discovery, tools and `enabled_calendars`. The event catalog is empty and subscriptions fail explicitly until durable delivery exists. Calendar permission never authorizes an agent to execute event text.
+
+## Cloudflare dispatcher
+
+The same repository contains `dispatcher/`, an independently built Worker with SQLite Durable Objects. See [dispatcher/README.md](dispatcher/README.md). Site deployment packages its own build output; the dispatcher is deployed separately with authenticated `cf`.
+
+Site runtime needs `DISPATCHER_ORIGIN`, secret `ALARM_ENCRYPTION_KEY` (32-byte base64, Site only), secret `ALARM_REGISTRATION_KEY` and secret `ALARM_CALLBACK_KEY`. The latter two keys are shared with the dispatcher. Do not log envelopes, keys or calendar content. After configuration/publication, Resync registers existing events; subsequent Google changes register fresh alarms.

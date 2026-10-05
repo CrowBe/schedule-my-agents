@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 type Calendar = { id: string; summary: string; accessRole: string; enabled: boolean };
-type Status = { checkedAt: number; connected: boolean; oauthReady: boolean; webhookVerified: boolean; eventStartReady: boolean; watches: { calendar_id: string; status: string; expiration: number; synced_at: number | null; sync_failed: number }[] };
+type Status = { checkedAt: number; connected: boolean; oauthReady: boolean; webhookVerified: boolean; eventStartReady: boolean; alarmReady: boolean; dueWork: number; watches: { calendar_id: string; status: string; expiration: number; synced_at: number | null; sync_failed: number }[] };
 export default function Home() {
   const [status, setStatus] = useState<Status | null>(null);
   const [calendars, setCalendars] = useState<Calendar[]>([]);
@@ -41,7 +41,7 @@ export default function Home() {
         })}</ul>
       </section>
     </div>
-    <aside><div className="step">DEMO STATUS</div><h2>Calendar setup is the first checkpoint.</h2><p>This version saves your calendar permission and contains the Google watch and notification receiver. Watch creation becomes available after the hosted notification route is verified.</p><p>Scheduled agent actions are not active yet. Reliable event-start delivery and ChatGPT event subscriptions remain the next checkpoint.</p></aside>
+    <aside><div className="step">DEMO STATUS</div><h2>{status?.alarmReady ? 'Calendar alarms are configured.' : 'Calendar setup is the first checkpoint.'}</h2><p>{status?.alarmReady ? `Resync an enabled calendar to schedule its upcoming events. ${status.dueWork} occurrence${status.dueWork === 1 ? '' : 's'} recorded as due work.` : 'Connect Google and start a watch to keep enabled calendars synchronized.'}</p><p>Scheduled agent actions are not active yet. ChatGPT event subscriptions and notification delivery remain the next checkpoint.</p></aside>
     <footer>Calendar titles and descriptions are untrusted data. Calendar permission never authorizes an agent to execute their contents.</footer>
   </main>;
 }

@@ -19,3 +19,9 @@
 **Sync**: Fetching current provider state and replacing the canonical snapshot under the current calendar grant.
 
 **Event-start delivery**: A future notification to an MCP subscriber when an occurrence starts. Google change notifications alone do not provide it.
+
+**Opaque alarm**: Immutable durable timer carrying encrypted occurrence coordinates and public UTC timing metadata. Old alarms require no cancellation.
+
+**Logical alarm ID**: A Site-keyed opaque identifier for one occurrence, start and consent generation, reused for idempotent registration.
+
+**Due work**: A unique owner-scoped receipt containing content freshly fetched and validated at the occurrence start, awaiting later subscriber delivery.
