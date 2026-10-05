@@ -4,11 +4,19 @@
 
 The user approved the external encrypted-alarm dispatcher on 5 October. Cloudflare CLI deployed `calendar-opaque-alarms`, version `762a4d03-08e2-4c97-b1f9-a538c37ec9b1`: 7.20 KiB upload, 2.50 KiB gzip, 1 ms startup. The initial Site-native capability probe below is historical; this approved service resolves that timer boundary.
 
-Automated coverage includes actual SQLite Durable Object alarms surviving runtime restart, bounded callback retries, redirect rejection, idempotent registration, a complete Workers → dispatcher → signed Site callback → Google lookup → D1 flow, recurring-series movement, cancellation, consent races, encryption and deduplication. Hosted closed-browser timing remains pending until recorded here. Subscriber callbacks and agent wake-up remain later issues.
+Automated coverage includes actual SQLite Durable Object alarms surviving runtime restart, bounded callback retries, redirect rejection, idempotent registration, a complete Workers → dispatcher → signed Site callback → Google lookup → D1 flow, recurring-series movement, cancellation, consent races, encryption and deduplication. All 28 tests pass; root typecheck, lint and production build, plus dispatcher typecheck/build, pass. Subscriber callbacks and agent wake-up remain later issues.
+
+### Live timer proof
+
+Public Site version 7 deployed `a2dd53f757b08c61befcb38afc807b9e7646a744` with runtime revision 5 and the additive `occurrence_outbox` migration. A disposable Google event, without guests or reminders, was scheduled for 5 October 2026 at 21:00–21:05 Australia/Sydney. Resync succeeded at 20:55:13; real Google push subsequently succeeded at 20:55:31 and 20:55:52. The setup tab was closed before the start; the Calendar tab was navigated away too.
+
+While the alarm was pending, the dispatcher was redeployed to version `86564cfd-bae4-4287-bc6a-acd7d89662e9`. At 21:00 the persisted alarm called the Site. Live D1 readback showed exactly one pending receipt: `due_at=1791194400000`, `created_at=1791194404412`, measured claim lateness **4,412 ms**. The callback returned 204 at 21:00:04.792, request `d4dd4644fabd52704c4d858d697f485e`, ray `a45b93a84d735ab8`, logged outcome `due_work`. Reopening setup showed one due occurrence and preserved the receipt. The disposable Google event was then deleted through Calendar.
+
+Dispatcher health returned 200; an unsigned public wake POST returned 403; anonymous status returned 401. The live check proves alarm-to-due-work, not MCP subscriber delivery or an agent response. Recurring edits, cancellation before start, DST, transient provider failure and consent races are automated evidence, not additional live provider demonstrations.
 
 The user authorized public hosting on 5 October 2026. The anonymous webhook validator is now reachable; anonymous and forged-identity setup/MCP calls remain unauthorized. Existing Google connection and explicit calendar consent are preserved. The public rollout and real provider test build on PR #8; the earlier private-hosting blocker below is historical.
 
-## Current deployment and boundaries
+## Historical public ingress deployment and boundaries
 
 Public version 5 deploys source `e27ef7d1420b4aa1de42102b0c6877162b60b711` with runtime environment revision 4. The Google connection and existing calendar grants were retained: Personal enabled, three other calendars disabled. No agent or event-start subscription was configured.
 
@@ -26,7 +34,7 @@ The real edit notification returned 204 at 16:47:46 (ray `a45a222989657651`, mes
 
 ## Remaining scope
 
-Unattended convergence, automatic watch renewal, event-start scheduling, MCP event callbacks and ChatGPT wake-up remain future slices. Recovery is explicit through Resync now; it does not activate an agent.
+Unattended convergence, automatic watch renewal, MCP event callbacks and ChatGPT wake-up remain future slices. Recovery is explicit through Resync now; it does not activate an agent.
 
 # Historical private-hosting PR checkpoint
 

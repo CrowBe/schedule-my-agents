@@ -59,6 +59,11 @@ test('encrypted alarm → live revalidation → restart/concurrent deduplicated 
   assert.equal((await f.service().handle(new Request(f.env.SITE_ORIGIN + '/api/status', { headers: { 'oai-authenticated-user-id': 'private-owner' } }))).status, 200);
   assert.equal(f.sql.prepare('SELECT count(*) n FROM occurrence_outbox').get()!.n, 1);
   assert.equal((await f.wake({ ...job, envelope: job.envelope.slice(0, -4) + 'aaaa' })).status, 403);
+  f.setNow(job.expiresAt + 86400_000);
+  assert.equal((await f.wake(job)).status, 204);
+  assert.equal(f.sql.prepare('SELECT count(*) n FROM occurrence_outbox').get()!.n, 0);
+  assert.equal((await f.wake(job)).status, 204);
+  assert.equal(f.sql.prepare('SELECT count(*) n FROM occurrence_outbox').get()!.n, 0, 'expired replay cannot restore cleaned due work');
 });
 
 test('series moves 10 → noon: stale alarm does not advance; valid noon alarm registers only next instance', async () => {
