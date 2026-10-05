@@ -14,7 +14,8 @@
     "db:generate": "drizzle-kit generate",
     "test": "node --experimental-transform-types --test --test-isolation=none tests/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "db:local": "node scripts/migrate-local.mjs"
+    "db:local": "node scripts/migrate-local.mjs",
+    "verify:ingress": "node scripts/check-ingress.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
