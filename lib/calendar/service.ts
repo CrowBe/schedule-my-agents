@@ -2,14 +2,18 @@ import { digest, open, random, seal } from './crypto.ts';
 import { GoogleCalendar, SCOPES, tokenRequest, type Fetch } from './google.ts';
 import { Store, type WatchRow } from './store.ts';
 import { AppError, type CalendarProvider, type Environment } from './types.ts';
+import { OccurrenceAlarms } from './alarms.ts';
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
 export type Dependencies = { http?: Fetch; now?: () => number; provider?: (owner: string) => Promise<CalendarProvider> };
 export class CalendarService {
   private store: Store;
   private http: Fetch;
   private now: () => number;
+  private alarms: OccurrenceAlarms;
   constructor(private env: Environment, private dependencies: Dependencies = {}) {
-    this.store = new Store(env.DB); this.http = dependencies.http ?? fetch; this.now = dependencies.now ?? Date.now;
+    const http = dependencies.http ?? fetch;
+    this.store = new Store(env.DB); this.http = (input, init) => http(input, init); this.now = dependencies.now ?? Date.now;
+    this.alarms = new OccurrenceAlarms(env, this.store, (input, init) => this.http(input, init), this.now, owner => this.provider(owner));
   }
   private origin() {
     if (!this.env.SITE_ORIGIN) throw new AppError(503, 'Site origin is not configured.');
@@ -38,12 +42,13 @@ export class CalendarService {
     try {
       const path = new URL(request.url).pathname;
       if (path === '/api/google/webhook' && request.method === 'POST') return await this.webhook(request);
+      if (path === '/api/alarms/wake' && request.method === 'POST') return await this.alarms.wake(request);
       const owner = this.identity(request);
       if (path === '/mcp' && request.method === 'POST') return await this.mcp(request, owner);
       if (path === '/api/status' && request.method === 'GET') {
-        await this.store.run('DELETE FROM events WHERE owner = ? AND julianday(json_extract(payload, \'$.start\')) < julianday(?)', owner, new Date(this.now()).toISOString());
         return json({ checkedAt: this.now(), connected: Boolean(await this.store.connection(owner)), oauthReady: Boolean(this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET && this.env.TOKEN_ENCRYPTION_KEY && this.env.SITE_ORIGIN),
-          webhookVerified: this.env.GOOGLE_WEBHOOK_VERIFIED === 'true', eventStartReady: false,
+          webhookVerified: this.env.GOOGLE_WEBHOOK_VERIFIED === 'true', eventStartReady: false, alarmReady: this.alarms.configured,
+          dueWork: (await this.store.first<{count: number}>('SELECT count(*) AS count FROM occurrence_outbox WHERE owner = ? AND status = \'pending\'', owner))?.count ?? 0,
           enabled: await this.store.all('SELECT calendar_id, summary FROM calendars WHERE owner = ? AND enabled = 1', owner),
           watches: await this.store.all('SELECT calendar_id, status, expiration, synced_at, sync_failed FROM watches WHERE owner = ? AND status != \'revoked\'', owner) });
       }
@@ -169,11 +174,13 @@ export class CalendarService {
       throw new AppError(503, 'Calendar synchronization is already in progress. Use Resync now after it completes.');
     }
     try {
-      const events = await (provider ?? await this.provider(watch.owner)).syncEvents(watch.calendar_id, this.now());
+      const calendarProvider = provider ?? await this.provider(watch.owner);
+      const events = await calendarProvider.syncEvents(watch.calendar_id, this.now());
       await this.store.replaceEvents(watch, events, this.now());
       await this.store.requireEnabled(watch.owner, watch.calendar_id, watch.generation);
       const current = await this.store.first<WatchRow>('SELECT * FROM watches WHERE id = ?', watch.id);
       if (current?.status !== 'active' || current.expiration <= this.now()) throw new AppError(409, 'Watch expired or was revoked during synchronization.');
+      await this.alarms.seed(watch.owner, watch.calendar_id, watch.generation, calendarProvider);
       console.info('calendar_snapshot_synced', { channelTag: (await digest(watch.id)).slice(0, 12), occurrences: events.length });
     } catch (error) {
       await this.store.run('UPDATE watches SET sync_failed = 1 WHERE id = ?', watch.id);

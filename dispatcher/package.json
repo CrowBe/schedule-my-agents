@@ -1,0 +1,16 @@
+{
+  "name": "calendar-alarm-dispatcher",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "cf build",
+    "deploy": "cf deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "cf": "1.0.0-beta.12",
+    "wrangler": "4.147.0",
+    "typescript": "5.9.3",
+    "@cloudflare/workers-types": "5.20261005.1"
+  }
+}

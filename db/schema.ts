@@ -1,6 +1,11 @@
-import { sqliteTable, text, integer, primaryKey } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, primaryKey, index } from 'drizzle-orm/sqlite-core';
 export const connections = sqliteTable('connections', { owner: text('owner').primaryKey(), refreshToken: text('refresh_token').notNull(), createdAt: integer('created_at').notNull() });
 export const oauthStates = sqliteTable('oauth_states', { state: text('state').primaryKey(), owner: text('owner').notNull(), verifier: text('verifier').notNull(), expiresAt: integer('expires_at').notNull() });
 export const calendars = sqliteTable('calendars', { owner: text('owner').notNull(), calendarId: text('calendar_id').notNull(), summary: text('summary').notNull(), enabled: integer('enabled').notNull().default(0), generation: text('generation').notNull() }, t => [primaryKey({ columns: [t.owner, t.calendarId] })]);
 export const watches = sqliteTable('watches', { id: text('id').primaryKey(), owner: text('owner').notNull(), calendarId: text('calendar_id').notNull(), generation: text('generation').notNull(), tokenHash: text('token_hash').notNull(), resourceId: text('resource_id'), expiration: integer('expiration').notNull(), status: text('status').notNull(), lastMessage: text('last_message'), syncedAt: integer('synced_at'), syncFailed: integer('sync_failed').notNull().default(0), syncUntil: integer('sync_until').notNull().default(0) });
 export const events = sqliteTable('events', { owner: text('owner').notNull(), calendarId: text('calendar_id').notNull(), providerEventId: text('provider_event_id').notNull(), payload: text('payload').notNull() }, t => [primaryKey({ columns: [t.owner, t.calendarId, t.providerEventId] })]);
+export const occurrenceOutbox = sqliteTable('occurrence_outbox', {
+  id: text('id').primaryKey(), owner: text('owner').notNull(), calendarId: text('calendar_id').notNull(), generation: text('generation').notNull(),
+  providerEventId: text('provider_event_id').notNull(), dueAt: integer('due_at').notNull(), createdAt: integer('created_at').notNull(),
+  expiresAt: integer('expires_at').notNull(), payload: text('payload').notNull(), status: text('status').notNull().default('pending'),
+}, t => [index('idx_occurrence_outbox_created_at').on(t.createdAt), index('idx_occurrence_outbox_owner_calendar').on(t.owner, t.calendarId)]);
