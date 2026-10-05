@@ -223,3 +223,39 @@ test('overlapping notification leaves recovery warning after in-flight snapshot 
   assert.equal(f.sql.prepare('SELECT sync_failed FROM watches').get()!.sync_failed, 0);
   assert.equal(f.sql.prepare('SELECT count(*) n FROM events').get()!.n, 0);
 });
+
+test('active initial notification cannot compete with watch bootstrap sync', async () => {
+  const f = fixture();
+  await f.request('/api/calendars/enable', { calendarId: 'personal' });
+  let initial!: Promise<Response>;
+  let delivered = false;
+  let enteredFetching = false;
+  let entered!: () => void;
+  let release!: () => void;
+  const fetching = new Promise<void>(resolve => { entered = resolve; });
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const sync = f.provider.syncEvents;
+  f.provider.syncEvents = async (...args) => { enteredFetching = true; entered(); await blocked; return sync(...args); };
+  const prepare = f.env.DB!.prepare;
+  f.env.DB!.prepare = query => {
+    const statement = prepare(query);
+    const first = statement.first.bind(statement);
+    statement.first = async <T>() => {
+      const row = await first<T>();
+      if (query === 'SELECT * FROM watches WHERE id = ?' && (row as { status?: string })?.status === 'active' && !delivered) {
+        delivered = true;
+        initial = f.webhook(undefined, { 'x-goog-resource-state': 'sync', 'x-goog-message-number': '1' });
+        await Promise.race([fetching, initial]);
+        if (!enteredFetching) release();
+      }
+      return row;
+    };
+    return statement;
+  };
+  const started = await f.request('/api/calendars/watch', { calendarId: 'personal' });
+  release();
+  assert.equal(started.status, 200, await started.text());
+  assert.equal((await initial).status, 204);
+  assert.equal(f.syncs.length, 1);
+  assert.equal(f.sql.prepare('SELECT status FROM watches').get()!.status, 'active');
+});

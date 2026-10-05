@@ -195,6 +195,11 @@ export class CalendarService {
       return new Response(null, { status: 204 });
     }
     if (watch.resource_id !== resource || watch.status !== 'active') throw new AppError(403, 'Notification resource does not match.');
+    // Initial notifications carry no event changes; watch creation owns the bootstrap fetch.
+    if (state === 'sync') {
+      console.info('calendar_notification', { channelTag: (await digest(id)).slice(0, 12), state, messageNumber: number, outcome: 'active-initial' });
+      return new Response(null, { status: 204 });
+    }
     if (watch.last_message && BigInt(number) <= BigInt(watch.last_message)) return new Response(null, { status: 204 });
     try { await this.sync(watch); } catch (error) {
       if (error instanceof AppError && error.status === 403) await this.store.revoke(watch.owner, watch.calendar_id, random());
