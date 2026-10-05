@@ -2,7 +2,7 @@
 
 Hypothesis: an existing calendar can become the native scheduling interface for an AI agent through MCP Events, without a second task scheduler UI.
 
-**First vertical slice: Google OAuth → discover → explicit calendar consent → watch → validated notification → upcoming canonical events in D1.** The real Google adapter and HTTP routes are implemented. Automated integration tests exercise this chain against SQLite and a fake provider, with OAuth/discovery regressions in the actual Workers runtime. The live Google client and secrets are configured; the real callback/discovery retry and hosted webhook ingress remain unverified. This is not yet the event-start/ChatGPT wake-up demo.
+**Current live checkpoint: Google OAuth → discover → explicit calendar consent saved in D1.** On 5 October 2026 the user completed Google authorization and enabled Personal; read-only live database inspection confirmed one connection and one enabled calendar. The watch, validated notification and canonical snapshot routes are implemented and covered by integration tests, including OAuth/discovery regressions in the actual Workers runtime. Hosted Google webhook ingress is still blocked, so no live watch or event-start/ChatGPT wake-up has been demonstrated.
 
 ## Architecture
 
@@ -17,7 +17,7 @@ Google Calendar → watch → POST /api/google/webhook
 
 ChatGPT → POST /mcp → enabled_calendars (read only)
 
-Future, currently blocked:
+Remaining MVP path:
 D1 occurrence → durable Site timer → signed MCP callback → ChatGPT
 ```
 
@@ -69,7 +69,7 @@ Discovery does not create calendar grants or watches. New/shared calendars defau
 
 Only timed occurrences in a seven-day window are normalized. Google expands recurrence; there is no custom recurrence engine. All-day events, cancelled occurrences, attendees and calendar history are excluded. Snapshot replacement handles edits and cancellation. This bounded window is a **setup/sync proof**, not a complete occurrence scheduler: it will not advance without a notification or manual renewal. Storage contains only refresh credentials, consent, short-lived OAuth state, watch metadata and the bounded upcoming snapshot. There is no event-content read tool yet. Tokens are never returned to the UI.
 
-## MCP contract in this commit
+## Current MCP contract
 
 `POST /mcp` implements MCP 2.0 `server/discover` (`2026-07-28`), `tools/list`, `tools/call`, and an authenticated, owner-scoped `enabled_calendars` tool. Legacy initialization is included for tool clients.
 
@@ -80,3 +80,5 @@ The next slice must implement the current [OpenAI MCP Events contract](https://d
 ## Limitations and next checkpoint
 
 See [VERIFICATION.md](VERIFICATION.md) for evidence and unresolved platform capabilities. Automatic watch renewal, durable event-start timers, safe callback transport, MCP subscriptions and ChatGPT wake-up are not implemented. Manual watch renewal is available after ingress is verified. Overlapping syncs are rejected using a bounded D1 lease; a failed notification may require manual watch renewal because Google does not guarantee retries. No external infrastructure has been added. The smallest potential fallback is described in the verification notes, contingent on confirming the missing Site capability.
+
+See [docs/mvp.md](docs/mvp.md) for the remaining vertical slices, their GitHub issues, dependencies and the final demo acceptance gate. Manual watch renewal and a declared bounded occurrence horizon remain acceptable for the first MVP demonstration.
