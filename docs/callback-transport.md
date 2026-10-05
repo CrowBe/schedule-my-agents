@@ -16,13 +16,24 @@ Fresh verification requests use Standard Webhooks HMAC-SHA256 over the exact ID,
 
 [OpenAI MCP Events](https://developers.openai.com/plugins/build/mcp-events) requires resolving and validating addresses at connection time and connecting to the validated address while preserving the original hostname for TLS verification. This applies to challenge verification and event delivery. URL syntax checks, DNS checks before ordinary fetch, and a hostname allowlist do not prove this boundary.
 
-Reviewed Sites v0.1.75 exposes normal Worker fetch and D1/R2 bindings, but no supported address-pinned HTTPS transport binding. The [Cloudflare socket API](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/) documents a destination hostname and TLS mode without an independently configurable verification hostname. The installed Workers types likewise lack that option. This establishes a gap in the reviewed surface, not that every underlying Cloudflare capability is impossible. We have not run a live rebinding or TLS proof and do not claim a safe transport.
+Reviewed Sites v0.1.75 exposes normal Worker fetch and D1/R2 bindings, but no supported address-pinned HTTPS transport binding. A deeper check on 5 October 2026 corrected the initial assessment: the installed Workers types **do** expose `Socket.startTls({ expectedServerHostname })` through `TlsOptions`. Type availability does not establish production support.
 
-## Smallest fallback for approval
+The reviewed native paths are:
 
-If no Site-native transport can be proved, add an authenticated, narrowly scoped HTTPS egress service that receives the already signed verification/delivery bytes from the Site. It resolves every attempt, rejects every non-public A/AAAA address, pins a validated address for the connection, preserves SNI and certificate verification against the original hostname, rejects redirects, enforces port 443, ten-second timeout and bounded request/response sizes. Mixed public/private DNS responses fail closed; retries resolve again. It returns only bounded response bytes and status. Deployment tests must prove rebinding resistance, IPv4/IPv6 special ranges, TLS hostname mismatch, redirects, timeout and streaming limits.
+| Path | Evidence | Result |
+| --- | --- | --- |
+| Ordinary Worker fetch | No caller-controlled resolved-address connection with separate TLS hostname | DNS checking before fetch leaves the rebinding gap |
+| Node HTTP/HTTPS adapter | [Cloudflare HTTP docs](https://developers.cloudflare.com/workers/runtime-apis/nodejs/http/) say `lookup` and `createConnection` are unsupported; requests wrap fetch | Cannot install a pinned-address agent through these adapters |
+| `cf.resolveOverride` | [Cloudflare Request docs](https://developers.cloudflare.com/workers/runtime-apis/request/) limit it to URL and override hosts within the Worker's zone | Cannot pin arbitrary ChatGPT callback hosts outside the Site's zone |
+| TCP plus `startTls` | [Current workerd source](https://github.com/cloudflare/workerd/blob/main/src/workerd/api/sockets.c%2B%2B) explicitly calls `expectedServerHostname` unsupported and can reject it through an autogate. [Open issue #6903](https://github.com/cloudflare/workerd/issues/6903) reports successful local tests but missing SNI and failed TLS on the production edge | A local success would not prove a safe hosted transport |
 
-This service necessarily handles callback destinations and signed payloads; future delivery includes private calendar content. Expanding the existing opaque alarm Worker to handle them would change its approved data boundary. Approval must cover that data exposure and deployment before provisioning or wiring either a separate service or expanded dispatcher. Reuse this one transport for verification and later delivery; do not enable readiness through an environment flag around raw fetch.
+The source was read directly on 5 October 2026. No live Site socket test was performed, so the deployed Site's exact behavior remains unmeasured. These are concrete limitations of the reviewed supported APIs, not a claim that every possible user-space TLS implementation is impossible. We are not shipping a custom TLS stack or bypassing certificate checks to overcome this boundary.
+
+## Deployment decision
+
+The user clarified that callback egress should remain within the existing Site deployment infrastructure and asked to avoid new infrastructure. No separate egress service is authorized or provisioned. The earlier fallback proposal is withdrawn from the implementation plan.
+
+Production remains fail-closed. To finish within the Site, we need a supported runtime capability that atomically validates the destination and connects to its approved public address while retaining callback-hostname TLS verification, or a documented Sites-managed safe egress binding with that guarantee. Reuse that one transport for verification and later delivery. Do not replace the boundary with an environment flag around raw fetch. The subscription implementation remains useful groundwork while this platform prerequisite is unresolved.
 
 ## Evidence still required
 

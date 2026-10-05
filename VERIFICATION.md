@@ -1,6 +1,6 @@
 # Issue #4 subscription checkpoint
 
-Subscription persistence, encrypted key rotation, signed challenges, expiry, refresh and unsubscribe are implemented. All 37 tests pass, including a Workers/D1 lifecycle and runtime restart with a test-only callback receiver; typecheck, lint and production build pass. Production remains fail-closed because no address-pinned HTTPS callback adapter is verified. No live subscription or ChatGPT callback was created. Issue #4 remains open; see [capability evidence and smallest fallback](docs/callback-transport.md).
+Subscription persistence, encrypted key rotation, signed challenges, expiry, refresh and unsubscribe are implemented. All 37 tests pass, including a Workers/D1 lifecycle and runtime restart with a test-only callback receiver; typecheck, lint and production build pass. Production remains fail-closed because no address-pinned HTTPS callback adapter is verified. No live subscription or ChatGPT callback was created. Issue #4 remains open; see [capability evidence and Site-only deployment decision](docs/callback-transport.md).
 
 # Public-hosting verification
 
