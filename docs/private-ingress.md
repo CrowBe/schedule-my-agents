@@ -31,7 +31,7 @@ The service-access check proves a forwarding path reaches webhook validation and
 
 Live browser verification separately showed Google connected, Personal enabled, the other three discovered calendars disabled, and Start watch disabled. D1 readback showed one enabled grant, zero watches and zero event rows. No credentials, calendar IDs or event contents are recorded here.
 
-Reproduce the anonymous checks with `npm run verify:ingress -- https://schedule-my-agents.bennycrow91.chatgpt.site`. Exit 1 means direct ingress is unproved; it is the expected current result. An existing service credential may be supplied through hidden stdin with `--service-token-stdin`; this never opens the runtime gate.
+Reproduce the anonymous checks with `npm run verify:ingress -- https://schedule-my-agents.bennycrow91.chatgpt.site`. Exit 1 means direct ingress is unproved; that was the expected private-hosting result. Public hosting now exits 0. An existing service credential may be supplied through hidden stdin with `--service-token-stdin`; this never opens the runtime gate.
 
 ## Minimal conditional alternative
 

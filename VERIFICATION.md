@@ -2,7 +2,27 @@
 
 The user authorized public hosting on 5 October 2026. The anonymous webhook validator is now reachable; anonymous and forged-identity setup/MCP calls remain unauthorized. Existing Google connection and explicit calendar consent are preserved. The public rollout and real provider test build on PR #8; the earlier private-hosting blocker below is historical.
 
-# Earlier PR checkpoint
+## Current deployment and boundaries
+
+Public version 5 deploys source `e27ef7d1420b4aa1de42102b0c6877162b60b711` with runtime environment revision 4. The Google connection and existing calendar grants were retained: Personal enabled, three other calendars disabled. No agent or event-start subscription was configured.
+
+Logged-out ingress proof on 5 October at 16:31 Australia/Sydney reached the application validator (forged webhook 403, ray `a45a0ad79ebbe7d4-SYD`). Anonymous status/MCP and forged identity headers remained 401. Only after this proof was `GOOGLE_WEBHOOK_VERIFIED=true` enabled. The dispatch-owned ChatGPT sign-in route returns 302 for a logged-out request.
+
+Real watch creation first exposed an active-initial-notification race: the initial notification and watch bootstrap competed for the sync lease. A deterministic regression reproduced the live 503. Authenticated initial notifications now acknowledge without fetching; bootstrap owns the initial snapshot. Invalid resources and revoked grants still fail closed.
+
+On version 5, real Google initial notification returned 204 at 16:43:52 (ray `a45a1c749882112b`, message 1, `active-initial`). Watch creation completed and D1 persisted an active channel, token hash, resource ID, expiry and successful initial snapshot. The first failed channel remains inactive for diagnosis; its provider channel was stopped.
+
+A disposable event with no guests/reminder was saved through the user's Google Calendar browser. Google's create notification returned 204 at 16:45:50 (ray `a45a1f4e58dc8114`, message 26883). D1 changed from 3 to 4 canonical occurrences and contained the test title and 6 October 18:00–18:05 +11:00 times. No manual resync was used.
+
+The real edit notification returned 204 at 16:47:46 (ray `a45a222989657651`, message 163163). D1 retained the same occurrence and reflected both its edited title and 18:10 end time. Google Calendar confirmed Event deleted after removing the disposable event. The delete notification returned 204 at 16:49:42 (ray `a45a24f9cd8f863e`, message 285094). D1 returned to 3 occurrences with the test row absent. All three changes used provider push, without manual resync.
+
+22 automated tests pass, including four Workers tests and the live-discovered race regression. Typecheck, lint, production build and both GitHub verification checks pass. Fake-provider coverage verifies failure/recovery, replay/order, expiry, disabled/newly shared calendars, owner isolation and revocation; destructive live revocation was not performed on the user's existing connection.
+
+## Remaining scope
+
+Unattended convergence, automatic watch renewal, event-start scheduling, MCP event callbacks and ChatGPT wake-up remain future slices. Recovery is explicit through Resync now; it does not activate an agent.
+
+# Historical private-hosting PR checkpoint
 
 Verified 5 October 2026 (Australia/Sydney), issue #2 PR source. The changed recovery UI/schema are local and awaiting PR review; hosted evidence refers to live version 3.
 
@@ -29,7 +49,7 @@ This is bounded manual recovery, not guaranteed unattended convergence or automa
 
 # Historical first-publication notes
 
-These earlier notes are retained for provenance. The current checkpoint above supersedes their pending OAuth/discovery status.
+These earlier notes are retained for provenance. The current public-hosting checkpoint supersedes these earlier findings.
 
 ## Capability checks
 

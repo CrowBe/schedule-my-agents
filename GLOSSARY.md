@@ -10,7 +10,7 @@
 
 **Watch**: An expiring Google notification channel for one explicitly enabled calendar. It signals collection changes, not event starts.
 
-**Notification**: A provider message identifying a changed watched resource. It contains no event contents and requires a subsequent sync.
+**Notification**: A provider message identifying a changed watched resource. It contains no event contents. Change notifications require a subsequent sync; the initial channel notification is acknowledged while watch creation fetches the first snapshot.
 
 **Occurrence**: One timed calendar event instance, including an expanded recurring instance. All-day and cancelled events are excluded from this slice.
 
