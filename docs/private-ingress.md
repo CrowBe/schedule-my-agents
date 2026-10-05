@@ -1,8 +1,14 @@
-# Private Site ingress: issue #2
+# Google ingress: issue #2
 
-## Result
+## Public-hosting resolution
 
-Direct Google ingress remains blocked. On 5 October 2026 at 11:43 Australia/Sydney, a logged-out POST to the exact `/api/google/webhook` route returned 401/HTML before application validation. The Site remains owner-private. No runtime gate was enabled and no live watch was created.
+On 5 October 2026 the user explicitly authorized public Site hosting while retaining ChatGPT sign-in, Google authorization and owner-scoped calendar grants. The audience changed from owner-private to public. Logged-out forged webhook requests now reach application validation (403); anonymous and forged-identity setup/MCP requests remain 401. No relay or new bypass credential is needed. Existing Google credentials and consent are preserved. Real watch/provider evidence is recorded in [VERIFICATION.md](../VERIFICATION.md).
+
+The private-audience constraint below is historical and superseded by that authorization. The conditional relay contract is retained only as context if private hosting is required again.
+
+## Historical private-hosting result
+
+Direct Google ingress was blocked. On 5 October 2026 at 11:43 Australia/Sydney, a logged-out POST to the exact `/api/google/webhook` route returned 401/HTML before application validation. The Site remains owner-private. No runtime gate was enabled and no live watch was created.
 
 The reviewed Sites v0.1.75 tools, authentication guidance and allowed manifest fields expose audience controls and service access, but no route-specific private-auth exemption. This is a finding about the available supported surface, not a claim about all possible future platform capabilities. Application routing cannot override a gate that runs before the Worker.
 
@@ -44,4 +50,4 @@ Implementing and deploying this alternative needs authorization for that externa
 
 ## Acceptance still outstanding
 
-A real Google initial notification and create/edit/cancel delivery, production channel/token-hash/expiry persistence, and live snapshot changes remain unverified. The local Workers E2E uses a fake provider. Issue #2 must remain open until these live criteria pass or its acceptance is explicitly revised.
+At the original private-hosting checkpoint, real Google initial and create/edit/cancel delivery, production watch persistence and live snapshot changes were unverified. Use the current VERIFICATION.md checkpoint for acceptance status. The local Workers E2E uses a fake provider. Issue #2 must remain open until these live criteria pass or its acceptance is explicitly revised.

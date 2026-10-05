@@ -1,6 +1,6 @@
 # Architecture
 
-The calendar is the scheduling interface. One private ChatGPT Site owns the setup UI, Google OAuth, MCP endpoint and D1 state using the bundled Vinext/Workers runtime. No separately provisioned backend is part of the implementation.
+The calendar is the scheduling interface. One publicly reachable ChatGPT Site owns the setup UI, Google OAuth, MCP endpoint and D1 state using the bundled Vinext/Workers runtime. No separately provisioned backend is part of the implementation.
 
 ## Implemented boundaries
 
@@ -10,7 +10,7 @@ Google discovery → explicit calendar grant → expiring watch → validated re
 
 ## Planned boundaries
 
-Verified provider ingress must precede live watch creation. The private hosting gate currently blocks Google's unauthenticated POST. [The ingress investigation](docs/private-ingress.md) records evidence and a conditional relay contract; no relay is deployed.
+Verified provider ingress must precede live watch creation. Public hosting allows Google's unauthenticated POST to reach channel validation while setup, data and MCP remain authenticated and owner scoped. [The ingress investigation](docs/private-ingress.md) preserves the earlier private-hosting evidence; the user authorized changing the hosting audience instead of deploying a relay.
 
 After ingress is proven, add Site-native durable occurrence scheduling and watch renewal, then persistent owner-scoped MCP subscriptions and signed callbacks. Subscription expiry, revocation, stable event IDs and bounded retries must be enforced at dispatch. Timer and callback-transport capabilities remain unverified. `calendar.event.starting` is planned; the current event catalog stays empty.
 

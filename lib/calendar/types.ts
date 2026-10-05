@@ -11,7 +11,7 @@ export interface Environment {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   TOKEN_ENCRYPTION_KEY?: string;
-  // Set only after an unauthenticated POST reaches this private Site in production.
+  // Set only after an unauthenticated provider POST reaches application validation in production.
   GOOGLE_WEBHOOK_VERIFIED?: string;
 }
 export type Calendar = { id: string; summary: string; accessRole: string };

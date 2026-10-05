@@ -1,8 +1,8 @@
 # Schedule my agents
 
-Use Google Calendar as the scheduling interface for an agent through a private ChatGPT Site. This prototype currently provides Google OAuth, calendar discovery, explicit consent, watch/sync code and an owner-scoped MCP calendar-list tool. Event-start delivery is planned.
+Use Google Calendar as the scheduling interface for an agent through a publicly reachable ChatGPT Site with authenticated setup and owner-scoped calendar data. This prototype currently provides Google OAuth, calendar discovery, explicit consent, watch/sync code and an owner-scoped MCP calendar-list tool. Event-start delivery is planned.
 
-Live OAuth, discovery and Personal consent have reached the hosted checkpoint. Google push ingress is still blocked by the private Site gate; local fake-provider tests do not prove live delivery. See [VERIFICATION.md](VERIFICATION.md) for current evidence and [docs/private-ingress.md](docs/private-ingress.md) for issue #2.
+Live OAuth, discovery and Personal consent have reached the hosted checkpoint. The user authorized public hosting to unblock Google push ingress. Local fake-provider tests do not prove live delivery. See [VERIFICATION.md](VERIFICATION.md) for current evidence and [docs/private-ingress.md](docs/private-ingress.md) for issue #2.
 
 ## Local development
 
@@ -23,7 +23,7 @@ Local development uses the starter's mock ChatGPT identity. Production relies on
 | `GOOGLE_CLIENT_ID` | Web client ID |
 | `GOOGLE_CLIENT_SECRET` | Server-side secret |
 | `TOKEN_ENCRYPTION_KEY` | Server-side base64 encoding of 32 random bytes for AES-GCM |
-| `GOOGLE_WEBHOOK_VERIFIED` | Keep unset until a real unauthenticated Google POST reaches the private Site. Set to `true` only after verifying ingress. |
+| `GOOGLE_WEBHOOK_VERIFIED` | Keep unset until a logged-out provider request reaches application validation and anonymous/forged-identity setup and MCP requests remain rejected. Set to `true` only after verifying ingress. |
 
 Generate an encryption key in a secure shell with `openssl rand -base64 32`. Keep it stable; changing it without token migration invalidates saved credentials. OAuth requests use PKCE, a short-lived single-use state bound to the authenticated owner and an HttpOnly cookie, and the read-only scopes `calendar.calendarlist.readonly` and `calendar.events.readonly`. Partial permission grants are rejected. Refresh credentials are encrypted with owner-bound associated data; access tokens are short-lived and not persisted.
 

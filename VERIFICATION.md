@@ -1,4 +1,8 @@
-# Verification checkpoint
+# Public-hosting verification
+
+The user authorized public hosting on 5 October 2026. The anonymous webhook validator is now reachable; anonymous and forged-identity setup/MCP calls remain unauthorized. Existing Google connection and explicit calendar consent are preserved. The public rollout and real provider test build on PR #8; the earlier private-hosting blocker below is historical.
+
+# Earlier PR checkpoint
 
 Verified 5 October 2026 (Australia/Sydney), issue #2 PR source. The changed recovery UI/schema are local and awaiting PR review; hosted evidence refers to live version 3.
 

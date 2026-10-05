@@ -136,7 +136,7 @@ export class CalendarService {
   }
   private async watch(owner: string, calendarId: string) {
     const calendar = await this.store.requireEnabled(owner, calendarId);
-    if (this.env.GOOGLE_WEBHOOK_VERIFIED !== 'true') throw new AppError(503, 'A public Google webhook route has not been verified for this private Site. Calendar consent is saved; watch creation is blocked.');
+    if (this.env.GOOGLE_WEBHOOK_VERIFIED !== 'true') throw new AppError(503, 'Google webhook ingress has not been verified for this Site. Calendar consent is saved; watch creation is blocked.');
     const provider = await this.provider(owner);
     const id = random(), token = random() + random(), now = this.now();
     const previous = await this.store.all<WatchRow>("SELECT * FROM watches WHERE owner = ? AND calendar_id = ? AND status = 'active'", owner, calendarId);
@@ -174,6 +174,7 @@ export class CalendarService {
       await this.store.requireEnabled(watch.owner, watch.calendar_id, watch.generation);
       const current = await this.store.first<WatchRow>('SELECT * FROM watches WHERE id = ?', watch.id);
       if (current?.status !== 'active' || current.expiration <= this.now()) throw new AppError(409, 'Watch expired or was revoked during synchronization.');
+      console.info('calendar_snapshot_synced', { channelTag: (await digest(watch.id)).slice(0, 12), occurrences: events.length });
     } catch (error) {
       await this.store.run('UPDATE watches SET sync_failed = 1 WHERE id = ?', watch.id);
       throw error;
@@ -189,7 +190,10 @@ export class CalendarService {
     if (!watch || watch.token_hash !== await digest(token) || watch.expiration <= this.now() || !['active', 'pending'].includes(watch.status)) throw new AppError(403, 'Notification channel is not authorized.');
     await this.store.requireEnabled(watch.owner, watch.calendar_id, watch.generation);
     // Google can send initial sync before events.watch returns its resource ID.
-    if (watch.status === 'pending' && state === 'sync') return new Response(null, { status: 204 });
+    if (watch.status === 'pending' && state === 'sync') {
+      console.info('calendar_notification', { channelTag: (await digest(id)).slice(0, 12), state, messageNumber: number, outcome: 'pending-initial' });
+      return new Response(null, { status: 204 });
+    }
     if (watch.resource_id !== resource || watch.status !== 'active') throw new AppError(403, 'Notification resource does not match.');
     if (watch.last_message && BigInt(number) <= BigInt(watch.last_message)) return new Response(null, { status: 204 });
     try { await this.sync(watch); } catch (error) {
@@ -197,6 +201,7 @@ export class CalendarService {
       throw error;
     }
     await this.store.run('UPDATE watches SET last_message = ? WHERE id = ?', number, id);
+    console.info('calendar_notification', { channelTag: (await digest(id)).slice(0, 12), state, messageNumber: number, outcome: 'synchronized' });
     return new Response(null, { status: 204 });
   }
   private async mcp(request: Request, owner: string) {
