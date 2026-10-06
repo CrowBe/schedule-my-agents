@@ -109,3 +109,15 @@ test('Google recurrence discovery selects actual starts, exceptions and DST offs
   const after = normalize('cal', { id: 'after', start: { dateTime: '2026-10-04T10:00:00+11:00' } })!;
   assert.equal(Date.parse(after.start) - Date.parse(before.start), 7 * 86400_000 - 3600_000);
 });
+test('audit registration links provider message to opaque occurrence and outbox without calendar text',async()=>{
+  const f=fixture(),logs:unknown[][]=[];const original=console.info;
+  console.info=(...args:unknown[])=>{logs.push(args);};
+  try {
+    await f.alarms().seed('private-owner','private-calendar','grant-1',{
+      discoverCalendars:async()=>[],stopWatchingCalendar:async()=>{},watchCalendar:async()=>{throw new Error();},syncEvents:async()=>[],alarmCandidates:async()=>[f.event],
+    },{channelTag:'opaque-channel',messageNumber:'42'});
+    const record=logs.find(row=>row[0]==='occurrence_registered')?.[1] as {channelTag:string;messageNumber:string;alarmTag:string;occurrenceTag:string};
+    assert.equal(record.channelTag,'opaque-channel');assert.equal(record.messageNumber,'42');assert.equal(record.alarmTag,f.jobs[0].id.slice(0,12));assert.equal(record.occurrenceTag.length,12);
+    for(const secret of ['private-owner','private-calendar','private-event','Secret appointment','encrypted-refresh'])assert.ok(!JSON.stringify(logs).includes(secret));
+  }finally{console.info=original;}
+});

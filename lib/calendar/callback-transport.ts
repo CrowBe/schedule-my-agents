@@ -8,7 +8,7 @@ import { validatedAddress } from './callback-policy.ts';
 
 declare global {
  var Go: new () => { importObject: WebAssembly.Imports; run(instance: WebAssembly.Instance): Promise<void> };
- var siteTLSRequest: (host:string, roots:string, read:()=>Promise<Uint8Array|null>, write:(value:Uint8Array)=>Promise<void>, close:()=>void, request:Uint8Array)=>Promise<Uint8Array>;
+ var siteTLSRequest: (host:string, roots:string, read:()=>Promise<Uint8Array|null>, write:(value:Uint8Array)=>Promise<void>, close:()=>void, request:Uint8Array, includeStatus?:boolean)=>Promise<Uint8Array>;
 }
 let ready: Promise<void> | undefined;
 async function initialize(){
@@ -36,15 +36,16 @@ export const directCallbackTransport: CallbackTransport={
   });
   const length=new TextEncoder().encode(body).byteLength;
   const bytes=new TextEncoder().encode(`POST ${url.pathname}${url.search} HTTP/1.1\r\nHost: ${url.hostname}\r\nContent-Length: ${length}\r\nConnection: close\r\nAccept-Encoding: identity\r\n${lines.join('\r\n')}\r\n\r\n${body}`);
-  if(bytes.length>262144)throw new Error('Callback exceeds byte budget');
+  if(length>262144||bytes.length>270336)throw new Error('Callback exceeds byte budget');
   const socket=connect({hostname:address,port:443},{secureTransport:'off',allowHalfOpen:false});
   void socket.closed.catch(()=>{});
   const close=()=>{void socket.close().catch(()=>{});};signal.addEventListener('abort',close,{once:true});
   try{
    await bounded(socket.opened,signal);
    const reader=socket.readable.getReader(),writer=socket.writable.getWriter();
-   const data=await bounded(siteTLSRequest(url.hostname,roots,async()=>{const v=await reader.read();return v.done?null:v.value;},value=>writer.write(value),close,bytes),signal);
-   return new Response(new Uint8Array(data).buffer,{status:200});
+   const data=await bounded(siteTLSRequest(url.hostname,roots,async()=>{const v=await reader.read();return v.done?null:v.value;},value=>writer.write(value),close,bytes,true),signal);
+   const status=data[0]*256+data[1];
+   return new Response(status===204||status===205||status===304?null:new Uint8Array(data.slice(2)).buffer,{status});
   }finally{signal.removeEventListener('abort',close);close();}
  }
 };

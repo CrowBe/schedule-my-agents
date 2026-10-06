@@ -38,10 +38,16 @@ Connect Google, enable a calendar, then start a watch once ingress is verified. 
 
 Only timed occurrences within seven days are stored. Attendees, all-day events, cancellations and history are excluded. Google expands recurrence. Disabling deletes event contents and rejects late notifications before best-effort provider cleanup. A newly shared calendar stays disabled.
 
-`POST /mcp` provides discovery, tools and `enabled_calendars`. The event catalog remains empty. Subscription lifecycle code is persisted and tested, but production subscriptions fail explicitly until address-pinned HTTPS transport and durable delivery are verified; see [the callback checkpoint](docs/callback-transport.md). Calendar permission never authorizes an agent to execute event text.
+`POST /mcp` provides discovery, tools and `enabled_calendars`. The event catalog remains empty. Subscription lifecycle code is persisted and tested, and the Site has a direct validated-IP Go TLS adapter. Real ChatGPT callback acceptance and durable delivery remain outstanding; see [the callback checkpoint](docs/callback-transport.md). Calendar permission never authorizes an agent to execute event text.
 
 ## Cloudflare dispatcher
 
 The same repository contains `dispatcher/`, an independently built Worker with SQLite Durable Objects. See [dispatcher/README.md](dispatcher/README.md). Site deployment packages its own build output; the dispatcher is deployed separately with authenticated `cf`.
 
 Site runtime needs `DISPATCHER_ORIGIN`, secret `ALARM_ENCRYPTION_KEY` (32-byte base64, Site only), secret `ALARM_REGISTRATION_KEY` and secret `ALARM_CALLBACK_KEY`. The latter two keys are shared with the dispatcher. Do not log envelopes, keys or calendar content. After configuration/publication, Resync registers existing events; subsequent Google changes register fresh alarms.
+
+## Signed delivery rollout
+
+Apply additive migration `0005_wooden_hitman.sql` before deploying the signed-outbox source. Existing subscriptions and alarm jobs are retained. Keep `MCP_EVENTS_READY=false` until the migrated hosted callback path is verified; then set it true and rescan the existing plugin event catalog. Discovery also requires verified ingress, configured alarms and validated callback transport. No dispatcher deployment or additional service is needed for this slice.
+
+Delivery has a five-minute lifetime and at most six claimed attempts per subscriber. Retries preserve the logical ID and body and use fresh signatures, including both keys during rotation. A lost acknowledgement may duplicate receipt; HTTP 2xx proves receipt only, not agent action. Edits, cancellation and revocation stop new dispatch; accepted callbacks cannot be recalled. See [delivery guarantees and local evidence](docs/signed-outbox.md). Watch expiry still requires manual renewal, and missed notifications require Resync now.

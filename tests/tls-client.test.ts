@@ -14,18 +14,18 @@ const fixtures=mkdtempSync(join(tmpdir(),'site-tls-certs-'));
 execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',join(fixtures,'key.pem'),'-out',join(fixtures,'cert.pem'),'-days','2','-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost'],{stdio:'ignore'});
 const cert=readFileSync(join(fixtures,'cert.pem'),'utf8'),key=readFileSync(join(fixtures,'key.pem'),'utf8');
 let received=0; let responseMode='ok';
-const server=createServer({cert,key},socket=>{socket.on('error',()=>{});socket.once('data',()=>{received++;if(responseMode==='stall')return;const body=responseMode==='large'?'x'.repeat(4097):'{}';socket.end(responseMode==='redirect'?'HTTP/1.1 302 Found\r\nLocation: https://localhost/next\r\nContent-Length: 0\r\nConnection: close\r\n\r\n':`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`);});});
+const server=createServer({cert,key},socket=>{socket.on('error',()=>{});socket.once('data',()=>{received++;if(responseMode==='stall')return;const body=responseMode==='large'?'x'.repeat(4097):'{}';socket.end(responseMode==='redirect'?'HTTP/1.1 302 Found\r\nLocation: https://localhost/next\r\nContent-Length: 0\r\nConnection: close\r\n\r\n':`HTTP/1.1 ${/^\d+$/.test(responseMode)?responseMode:'200'} Result\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`);});});
 server.on('tlsClientError',()=>{});
 async function listen(){if(!server.listening)await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));return (server.address() as {port:number}).port;}
 test('Go standard TLS over raw TCP verifies certificate and hostname before sending application data',async()=>{
  const port=await listen();
  createRequire(import.meta.url)(join(root,'tls-client/wasm-exec.cjs'));
- const globals=globalThis as unknown as {Go:new()=>{importObject:WebAssembly.Imports;run:(instance:WebAssembly.Instance)=>Promise<void>};siteTLSRequest:(host:string,pem:string,read:()=>Promise<Uint8Array|null>,write:(bytes:Uint8Array)=>Promise<void>,close:()=>void,request:Uint8Array)=>Promise<Uint8Array>};
+ const globals=globalThis as unknown as {Go:new()=>{importObject:WebAssembly.Imports;run:(instance:WebAssembly.Instance)=>Promise<void>};siteTLSRequest:(host:string,pem:string,read:()=>Promise<Uint8Array|null>,write:(bytes:Uint8Array)=>Promise<void>,close:()=>void,request:Uint8Array,includeStatus?:boolean)=>Promise<Uint8Array>};
  const go=new globals.Go(),wasm=await WebAssembly.compile(new Uint8Array(readFileSync('tls-client/tls.wasm')).buffer);void go.run(await WebAssembly.instantiate(wasm,go.importObject));
- async function request(host:string,pem:string,corrupt=false){
+ async function request(host:string,pem:string,corrupt=false,includeStatus=false){
   const socket=createConnection({host:'127.0.0.1',port});socket.on('error',()=>{});
   const iterator=socket[Symbol.asyncIterator]();
-  const response=globals.siteTLSRequest(host,pem,async()=>{const v=await iterator.next();if(v.done)return null;const bytes=new Uint8Array(v.value);if(corrupt)bytes[0]^=255;return bytes;},bytes=>new Promise<void>((resolve,reject)=>socket.write(bytes,e=>e?reject(e):resolve())),()=>socket.destroy(),new TextEncoder().encode('POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'));
+  const response=globals.siteTLSRequest(host,pem,async()=>{const v=await iterator.next();if(v.done)return null;const bytes=new Uint8Array(v.value);if(corrupt)bytes[0]^=255;return bytes;},bytes=>new Promise<void>((resolve,reject)=>socket.write(bytes,e=>e?reject(e):resolve())),()=>socket.destroy(),new TextEncoder().encode('POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'),includeStatus);
   const timer=setTimeout(()=>socket.destroy(),responseMode==='stall'?100:5000);try{return await response;}finally{clearTimeout(timer);socket.destroy();}
  }
  try {
@@ -36,6 +36,11 @@ test('Go standard TLS over raw TCP verifies certificate and hostname before send
   await assert.rejects(request('localhost',readFileSync(join(fixtures,'other.pem'),'utf8')),/unknown authority|certificate/i);assert.equal(received,1);
   await assert.rejects(request('localhost',cert,true));assert.equal(received,1);
   responseMode='redirect';await assert.rejects(request('localhost',cert),/non-success/);
+  for(const status of [302,410,413,503]) {
+    responseMode=String(status);const data=await request('localhost',cert,false,true);
+    assert.equal(data[0]*256+data[1],status);assert.equal(data.length,2);
+  }
+  responseMode='ok';const structured=await request('localhost',cert,false,true);assert.equal(structured[0]*256+structured[1],200);assert.equal(new TextDecoder().decode(structured.slice(2)),'{}');
   responseMode='large';await assert.rejects(request('localhost',cert),/response too large/);
   responseMode='stall';await assert.rejects(request('localhost',cert));responseMode='ok';
   execFileSync('openssl',['req','-new','-key',join(fixtures,'key.pem'),'-out',join(fixtures,'expired.csr'),'-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost'],{stdio:'ignore'});
