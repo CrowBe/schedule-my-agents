@@ -25,3 +25,7 @@
 **Logical alarm ID**: A Site-keyed opaque identifier for one occurrence, start and consent generation, reused for idempotent registration.
 
 **Due work**: A unique owner-scoped receipt containing content freshly fetched and validated at the occurrence start, awaiting later subscriber delivery.
+
+**Subscription**: An owner- and consent-generation-scoped, finite permission to notify a verified callback about one enabled calendar. It grants no authority to execute calendar text.
+
+**Callback transport**: The connection boundary that validates public destination addresses, pins the connection and retains hostname TLS verification. It must be shared by verification and event delivery.

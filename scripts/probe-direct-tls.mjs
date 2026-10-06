@@ -1,0 +1,7 @@
+// Manual public-network probe. Sends only synthetic data; never calendar content.
+import {build} from 'esbuild';
+import {Miniflare} from 'miniflare';
+import {readFileSync} from 'node:fs';
+const {outputFiles}=await build({stdin:{contents:`import {directCallbackTransport} from './lib/calendar/callback-transport.ts';export default {async fetch(){try{return await directCallbackTransport.post('https://httpbin.org/post',JSON.stringify({probe:'site-direct-tls'}),{'Content-Type':'application/json'},AbortSignal.timeout(10000));}catch(e){return Response.json({error:e.message},{status:502});}}};`,resolveDir:process.cwd(),sourcefile:'tls-network-probe.ts'},bundle:true,write:false,format:'esm',platform:'browser',target:'es2022',external:['cloudflare:sockets','node:dns/promises'],plugins:[{name:'tls-assets',setup(b){b.onResolve({filter:/tls\.wasm$/},()=>({path:'./tls.wasm',external:true}));b.onResolve({filter:/roots\.pem\?raw$/},()=>({path:process.cwd()+'/tls-client/roots.pem',namespace:'pem'}));b.onLoad({filter:/.*/,namespace:'pem'},a=>({contents:readFileSync(a.path,'utf8'),loader:'text'}));}}]});
+const mf=new Miniflare({modules:[{type:'ESModule',path:'main.js',contents:outputFiles[0].text},{type:'CompiledWasm',path:'tls.wasm',contents:readFileSync('tls-client/tls.wasm')}],compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],cf:false});
+try{const r=await mf.dispatchFetch('https://probe.example/');console.log(r.status,await r.text());if(!r.ok)process.exitCode=1;}finally{await mf.dispose();}

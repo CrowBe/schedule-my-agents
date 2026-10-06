@@ -51,3 +51,6 @@ next-env.d.ts
 
 !.env.example
 *.tsbuildinfo
+
+# Public CA bundle, never a private key.
+!/tls-client/roots.pem

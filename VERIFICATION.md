@@ -1,3 +1,11 @@
+# Site-local TLS implementation — 6 October 2026
+
+The Site Worker now wires Go 1.27.1 standard TLS/X.509 compiled to WASM over raw TCP to a validated literal public IP. Existing timer infrastructure is unchanged. A local Workers public-network probe successfully posted synthetic data directly to httpbin.org with real DNS and the fixed CA bundle. Real local TLS tests reject wrong-host and untrusted/expired certificates, corrupted records, redirects, oversized bodies and stalled peers. Worker execution and Site production bundling succeed. Site version 10 (`6e5a32d43433c29edfbd55bf4f5cb3131d5f9cea`, environment revision 5) deployed successfully with MCP retained. At 11:25 Australia/Sydney, the authenticated fixed diagnostic completed HTTP 200 in the production Worker: request `f0cc58d76864abf694e3e05182e8641c`, ray `a4608768e93bd8d7`, wall time 998 ms, CPU time 154 ms. Its code reaches that result only after direct TLS, a 2xx upstream response and bounded JSON parsing. Chrome blocked display of the JSON document, so the echo boolean was not independently read; the Worker invocation supplies hosted transport evidence. Existing setup was then verified to retain the Google connection, enabled calendar, watch and one due receipt, with no browser console errors. No real ChatGPT callback/subscription proof is claimed; event discovery remains closed. All 41 tests, typecheck, lint and production build pass. See [implementation](tls-client/README.md) and [transport checkpoint](docs/callback-transport.md).
+
+# Issue #4 subscription checkpoint
+
+Subscription persistence, encrypted key rotation, signed challenges, expiry, refresh and unsubscribe are implemented. All 37 tests pass, including a Workers/D1 lifecycle and runtime restart with a test-only callback receiver; typecheck, lint and production build pass. This historical checkpoint preceded the Site-local TLS implementation above. No live subscription or ChatGPT callback was created. Issue #4 remains open; see [capability evidence and Site-only deployment decision](docs/callback-transport.md).
+
 # Public-hosting verification
 
 ## Issue #3 opaque alarm implementation
