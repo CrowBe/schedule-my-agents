@@ -1,12 +1,13 @@
 import { Deliveries } from './delivery.ts';
 import type { CallbackTransport } from './subscriptions.ts';
 import { boundedBody, bytes, LATE_WINDOW, MAX_HORIZON, mac, parseJob, signedHeaders, verified, type AlarmJob } from '../../shared/alarm.ts';
-import { base64, open, seal } from './crypto.ts';
+import { base64, digest, open, seal } from './crypto.ts';
 import { type Fetch } from './google.ts';
 import { Store } from './store.ts';
 import { AppError, type CalendarEvent, type CalendarProvider, type Environment } from './types.ts';
 
 type Envelope = { v: 1; owner: string; calendarId: string; generation: string; eventId: string; start: number; expiresAt: number; seriesId?: string; originalStartTime?: string };
+type AuditSource = { channelTag?: string; messageNumber?: string; parentAlarmTag?: string };
 const AUDIENCE = 'calendar-alarm:v1';
 export class OccurrenceAlarms {
   constructor(private env: Environment, private store: Store, private http: Fetch, private now: () => number, private provider: (owner: string) => Promise<CalendarProvider>, private transport?: CallbackTransport) {}
@@ -16,7 +17,7 @@ export class OccurrenceAlarms {
     const derived = await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(32), info: new TextEncoder().encode(AUDIENCE + ':logical-id') }, material, 256);
     return mac(base64(new Uint8Array(derived)), JSON.stringify([AUDIENCE, e.owner, e.calendarId, e.generation, e.seriesId ?? e.eventId, e.originalStartTime ?? e.eventId, e.start]));
   }
-  async register(owner: string, calendarId: string, generation: string, event: CalendarEvent) {
+  async register(owner: string, calendarId: string, generation: string, event: CalendarEvent, source: AuditSource = {}) {
     const start = Date.parse(event.start);
     if (!Number.isSafeInteger(start) || start <= this.now() || start > this.now() + MAX_HORIZON) return;
     await this.store.requireEnabled(owner, calendarId, generation);
@@ -34,11 +35,12 @@ export class OccurrenceAlarms {
     if (!result.registered || result.id !== job.id) throw new AppError(503, 'Alarm registration was not acknowledged.');
     // Consent may have changed while the opaque alarm was being registered; wake validation also rejects it.
     await this.store.requireEnabled(owner, calendarId, generation);
+    console.info('occurrence_registered', { ...source, occurrenceTag: (await digest(JSON.stringify([owner, calendarId, event.providerEventId]))).slice(0, 12), alarmTag: job.id.slice(0, 12), dueAt: start });
   }
-  async seed(owner: string, calendarId: string, generation: string, provider: CalendarProvider) {
+  async seed(owner: string, calendarId: string, generation: string, provider: CalendarProvider, source: AuditSource = {}) {
     if (!this.configured) return;
     if (!provider.alarmCandidates) throw new AppError(503, 'Provider alarm discovery is unavailable.');
-    for (const event of await provider.alarmCandidates(calendarId, this.now())) await this.register(owner, calendarId, generation, event);
+    for (const event of await provider.alarmCandidates(calendarId, this.now())) await this.register(owner, calendarId, generation, event, source);
   }
   private log(id: string, outcome: string, dueAt: number) {
     console.info('occurrence_wake', { alarmTag: id.slice(0, 12), outcome, latenessMs: this.now() - dueAt });
@@ -91,7 +93,7 @@ export class OccurrenceAlarms {
     if (e.seriesId) {
       if (!provider.nextOccurrence) throw new AppError(503, 'Provider recurrence lookup is unavailable.');
       const next = await provider.nextOccurrence(e.calendarId, e.seriesId, Math.max(e.start, this.now()));
-      if (next) await this.register(e.owner, e.calendarId, e.generation, next);
+      if (next) await this.register(e.owner, e.calendarId, e.generation, next, { parentAlarmTag: job.id.slice(0, 12) });
     }
     // A single guarded INSERT claims due work. Status reads and snapshot replacement cannot delete it.
     const claimed = await this.store.claimDue(job.id, e.owner, e.calendarId, e.generation, event, e.start, this.now(), e.expiresAt);

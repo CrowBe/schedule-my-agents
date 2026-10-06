@@ -38,7 +38,7 @@ export function deliveryOutcome(status: number): 'accepted' | 'terminal' | 'retr
 // The original opaque alarm remains unacknowledged while work needs recovery.
 // Its durable retries drive this ledger; no additional scheduler is introduced.
 import { Subscriptions, type CallbackTransport } from './subscriptions.ts';
-import { open, random } from './crypto.ts';
+import { digest, open, random } from './crypto.ts';
 import { Store } from './store.ts';
 import { AppError, type Environment } from './types.ts';
 type Receipt = { id: string; owner: string; calendar_id: string; generation: string; payload: string; expires_at: number; status: string };
@@ -114,7 +114,7 @@ export class Deliveries {
       await this.store.run(`UPDATE deliveries SET status = ?, last_status = ?, next_at = ?, lease = NULL, lease_until = 0,
         body = CASE WHEN ? = 'pending' THEN body ELSE '' END WHERE outbox_id = ? AND subscription_id = ? AND lease = ?`,
         final, status, this.now() + Math.min(60_000, 2000 * 2 ** (delivery.attempts - 1)), final, id, row.subscription_id, lease);
-      console.info('calendar_delivery', { eventTag: id.slice(0,12), outcome: final, attempt: delivery.attempts, status });
+      console.info('calendar_delivery', { eventTag: id.slice(0,12), subscriptionTag: (await digest(row.subscription_id)).slice(0,12), outcome: final, attempt: delivery.attempts, status });
     }
     const pending = await this.store.first<{n: number}>("SELECT count(*) n FROM deliveries WHERE outbox_id = ? AND status = 'pending'", id);
     if (pending?.n) throw new AppError(503, 'Delivery is pending durable retry.');
