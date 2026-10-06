@@ -11,6 +11,7 @@ const eslintConfig = defineConfig([
     ".next/**",
     "out/**",
     "build/**",
+    "tls-client/wasm-exec.cjs",
     "next-env.d.ts",
     "**/.cloudflare/**",
     "**/node_modules/**",

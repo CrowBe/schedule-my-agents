@@ -1,6 +1,10 @@
+# Site-local TLS implementation — 6 October 2026
+
+The Site Worker now wires Go 1.27.1 standard TLS/X.509 compiled to WASM over raw TCP to a validated literal public IP. Existing timer infrastructure is unchanged. A local Workers public-network probe successfully posted synthetic data directly to httpbin.org with real DNS and the fixed CA bundle. Real local TLS tests reject wrong-host and untrusted/expired certificates, corrupted records, redirects, oversized bodies and stalled peers. Worker execution and Site production bundling succeed. No hosted Site or real ChatGPT callback proof is claimed yet; event discovery remains closed. See [implementation](tls-client/README.md) and [transport checkpoint](docs/callback-transport.md).
+
 # Issue #4 subscription checkpoint
 
-Subscription persistence, encrypted key rotation, signed challenges, expiry, refresh and unsubscribe are implemented. All 37 tests pass, including a Workers/D1 lifecycle and runtime restart with a test-only callback receiver; typecheck, lint and production build pass. Production remains fail-closed because no address-pinned HTTPS callback adapter is verified. No live subscription or ChatGPT callback was created. Issue #4 remains open; see [capability evidence and Site-only deployment decision](docs/callback-transport.md).
+Subscription persistence, encrypted key rotation, signed challenges, expiry, refresh and unsubscribe are implemented. All 37 tests pass, including a Workers/D1 lifecycle and runtime restart with a test-only callback receiver; typecheck, lint and production build pass. This historical checkpoint preceded the Site-local TLS implementation above. No live subscription or ChatGPT callback was created. Issue #4 remains open; see [capability evidence and Site-only deployment decision](docs/callback-transport.md).
 
 # Public-hosting verification
 

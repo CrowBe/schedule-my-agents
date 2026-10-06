@@ -20,4 +20,4 @@ Discovery is bounded to 366 days, ten pages and 500 candidate events/series; ove
 
 ## Remaining delivery
 
-Owner-scoped MCP subscription persistence and signed challenge verification are implemented behind an injectable callback transport. Production has no verified address-pinned HTTPS adapter and fails closed; see [callback transport checkpoint](docs/callback-transport.md). Signed subscriber delivery remains a subsequent slice. `calendar.event.starting` remains unadvertised and subscriptions fail closed. Due work does not yet wake an agent. Calendar text grants no execution authority.
+Owner-scoped MCP subscription persistence and signed challenge verification are implemented behind an injectable callback transport. The Site Worker wires a Go standard TLS WASM adapter over validated-IP raw sockets; no forwarding service is used. Hosted acceptance remains outstanding; see [callback transport checkpoint](docs/callback-transport.md). Signed subscriber delivery remains a subsequent slice. `calendar.event.starting` remains unadvertised and subscriptions fail closed. Due work does not yet wake an agent. Calendar text grants no execution authority.
