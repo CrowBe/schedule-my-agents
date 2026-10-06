@@ -1,3 +1,5 @@
+import { Deliveries } from './delivery.ts';
+import type { CallbackTransport } from './subscriptions.ts';
 import { boundedBody, bytes, LATE_WINDOW, MAX_HORIZON, mac, parseJob, signedHeaders, verified, type AlarmJob } from '../../shared/alarm.ts';
 import { base64, open, seal } from './crypto.ts';
 import { type Fetch } from './google.ts';
@@ -7,7 +9,7 @@ import { AppError, type CalendarEvent, type CalendarProvider, type Environment }
 type Envelope = { v: 1; owner: string; calendarId: string; generation: string; eventId: string; start: number; expiresAt: number; seriesId?: string; originalStartTime?: string };
 const AUDIENCE = 'calendar-alarm:v1';
 export class OccurrenceAlarms {
-  constructor(private env: Environment, private store: Store, private http: Fetch, private now: () => number, private provider: (owner: string) => Promise<CalendarProvider>) {}
+  constructor(private env: Environment, private store: Store, private http: Fetch, private now: () => number, private provider: (owner: string) => Promise<CalendarProvider>, private transport?: CallbackTransport) {}
   get configured() { return Boolean(this.env.DISPATCHER_ORIGIN && this.env.ALARM_ENCRYPTION_KEY && this.env.ALARM_REGISTRATION_KEY && this.env.ALARM_CALLBACK_KEY); }
   private async id(e: Envelope) {
     const material = await crypto.subtle.importKey('raw', bytes(this.env.ALARM_ENCRYPTION_KEY!), 'HKDF', false, ['deriveBits']);
@@ -41,6 +43,12 @@ export class OccurrenceAlarms {
   private log(id: string, outcome: string, dueAt: number) {
     console.info('occurrence_wake', { alarmTag: id.slice(0, 12), outcome, latenessMs: this.now() - dueAt });
   }
+  private async stop(id: string) {
+    await this.store.batch([
+      this.store.statement("UPDATE deliveries SET status = 'terminal', body = '' WHERE outbox_id = ? AND status = 'pending'", id),
+      this.store.statement("UPDATE occurrence_outbox SET status = 'terminal', payload = '' WHERE id = ?", id),
+    ]);
+  }
   async wake(request: Request) {
     if (!this.configured) throw new AppError(503, 'Occurrence alarms are not configured.');
     let body: string;
@@ -57,11 +65,13 @@ export class OccurrenceAlarms {
     const ack = () => new Response(null, { status: 204 });
     if (this.now() < e.start) throw new AppError(409, 'Alarm is not due.');
     if (this.now() > e.expiresAt) {
+      await this.store.run('DELETE FROM deliveries WHERE outbox_id = ?', job.id);
       await this.store.run('DELETE FROM occurrence_outbox WHERE id = ? AND expires_at < ?', job.id, this.now());
       this.log(job.id, 'expired_cleanup', e.start); return ack();
     }
     const grant = await this.store.calendar(e.owner, e.calendarId);
     if (!grant?.enabled || grant.generation !== e.generation || !await this.store.connection(e.owner)) {
+      await this.stop(job.id);
       this.log(job.id, 'consent_revoked', e.start); return ack();
     }
     const provider = await this.provider(e.owner);
@@ -69,11 +79,12 @@ export class OccurrenceAlarms {
     let event: CalendarEvent | null;
     try { event = await provider.getOccurrence(e.calendarId, e.eventId); }
     catch (error) {
-      if (error instanceof AppError && error.status === 403) { this.log(job.id, 'provider_access_revoked', e.start); return ack(); }
+      if (error instanceof AppError && error.status === 403) { await this.stop(job.id); this.log(job.id, 'provider_access_revoked', e.start); return ack(); }
       throw error;
     }
     if (!event || event.status === 'cancelled' || event.calendarId !== e.calendarId || event.providerEventId !== e.eventId || Date.parse(event.start) !== e.start ||
       event.recurringEventId !== e.seriesId || event.originalStartTime !== e.originalStartTime) {
+      await this.stop(job.id);
       this.log(job.id, 'stale_or_cancelled', e.start); return ack();
     }
     // Only a valid wake advances the chain. Register first; retries/dedup must not break the successor.
@@ -85,6 +96,7 @@ export class OccurrenceAlarms {
     // A single guarded INSERT claims due work. Status reads and snapshot replacement cannot delete it.
     const claimed = await this.store.claimDue(job.id, e.owner, e.calendarId, e.generation, event, e.start, this.now(), e.expiresAt);
     this.log(job.id, claimed ? 'due_work' : 'duplicate_or_revoked', e.start);
+    await new Deliveries(this.store, this.env, this.now, this.transport).dispatch(job.id, event);
     return ack();
   }
 }

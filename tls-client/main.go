@@ -54,12 +54,16 @@ func request(a []js.Value)([]byte,error) {
  conn:=tls.Client(s,&tls.Config{ServerName:host,RootCAs:roots,MinVersion:tls.VersionTLS12,NextProtos:[]string{"http/1.1"}})
  if err:=conn.Handshake();err!=nil{return nil,err}
  // No application bytes are sent before full chain, hostname and validity checks.
- size:=a[5].Get("byteLength").Int();if size>262144{return nil,errors.New("request too large")};body:=make([]byte,size);js.CopyBytesToGo(body,a[5])
+ size:=a[5].Get("byteLength").Int();if size>270336{return nil,errors.New("request too large")};body:=make([]byte,size);js.CopyBytesToGo(body,a[5])
  if _,err:=io.Copy(conn,bytes.NewReader(body));err!=nil{return nil,err}
  resp,err:=http.ReadResponse(bufio.NewReaderSize(conn,4096),nil);if err!=nil{return nil,err};defer resp.Body.Close()
- if resp.StatusCode<200||resp.StatusCode>=300{return nil,errors.New("non-success callback response")}
+ // Delivery needs terminal HTTP statuses; legacy diagnostic callers still reject them.
+ structured:=len(a)>6&&a[6].Bool()
+ if !structured&&(resp.StatusCode<200||resp.StatusCode>=300){return nil,errors.New("non-success callback response")}
+ if structured&&(resp.StatusCode<200||resp.StatusCode>=300){return []byte{byte(resp.StatusCode>>8),byte(resp.StatusCode)},nil}
  if resp.Header.Get("Content-Encoding")!=""&&resp.Header.Get("Content-Encoding")!="identity"{return nil,errors.New("unsupported response encoding")}
  data,err:=io.ReadAll(io.LimitReader(resp.Body,4097));if err!=nil{return nil,err};if len(data)>4096{return nil,errors.New("response too large")}
+ if structured{return append([]byte{byte(resp.StatusCode>>8),byte(resp.StatusCode)},data...),nil}
  return data,nil
 }
 func main(){

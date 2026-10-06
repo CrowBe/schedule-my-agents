@@ -19,3 +19,11 @@ export const subscriptions = sqliteTable('subscriptions', {
 export const subscriptionAttempts = sqliteTable('subscription_attempts', {
   id: text('id').primaryKey(), owner: text('owner').notNull(), calendarId: text('calendar_id').notNull(), revision: text('revision').notNull(), expiresAt: integer('expires_at').notNull(),
 });
+
+export const deliveries = sqliteTable('deliveries', {
+  outboxId: text('outbox_id').notNull(), subscriptionId: text('subscription_id').notNull(),
+  owner: text('owner').notNull(), calendarId: text('calendar_id').notNull(),
+  body: text('body').notNull(), status: text('status').notNull().default('pending'),
+  attempts: integer('attempts').notNull().default(0), nextAt: integer('next_at').notNull(),
+  lease: text('lease'), leaseUntil: integer('lease_until').notNull().default(0), lastStatus: integer('last_status'),
+}, t => [primaryKey({ columns: [t.outboxId, t.subscriptionId] }), index('idx_deliveries_owner_calendar').on(t.owner, t.calendarId)]);
