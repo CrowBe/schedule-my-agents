@@ -8,9 +8,8 @@ export default {
   async fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext<{ CONNECTORS?: ConnectorBinding }>) {
     const path = new URL(request.url).pathname;
     // Fixed synthetic diagnostic; never accepts a destination, headers or private payload.
-    if (path === '/api/diagnostics/tls' && request.method === 'POST') {
+    if (path === '/api/diagnostics/tls' && request.method === 'GET') {
       if (!request.headers.get('oai-authenticated-user-id')) return Response.json({ error: 'Sign in.' }, { status: 401 });
-      if (request.headers.get('origin') !== env.SITE_ORIGIN) return Response.json({ error: 'Invalid origin.' }, { status: 403 });
       try {
         const response = await directCallbackTransport.post('https://httpbin.org/post', JSON.stringify({ probe: 'site-direct-tls' }), { 'Content-Type': 'application/json' }, AbortSignal.timeout(10_000));
         const echoed = await response.json() as { json?: { probe?: string } };
