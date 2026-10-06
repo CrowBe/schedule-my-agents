@@ -41,7 +41,7 @@ export default function Home() {
         })}</ul>
       </section>
     </div>
-    <aside><div className="step">DEMO STATUS</div><h2>{status?.alarmReady ? 'Calendar alarms are configured.' : 'Calendar setup is the first checkpoint.'}</h2><p>{status?.alarmReady ? `Resync an enabled calendar to schedule its upcoming events. ${status.dueWork} occurrence${status.dueWork === 1 ? '' : 's'} recorded as due work.` : 'Connect Google and start a watch to keep enabled calendars synchronized.'}</p><p>Scheduled agent actions are not active yet. ChatGPT event subscriptions and notification delivery remain the next checkpoint.</p></aside>
+    <aside><div className="step">DEMO STATUS</div><h2>{status?.alarmReady ? 'Calendar alarms are configured.' : 'Calendar setup is the first checkpoint.'}</h2><p>{status?.alarmReady ? `Resync an enabled calendar to schedule its upcoming events. ${status.dueWork} occurrence${status.dueWork === 1 ? '' : 's'} recorded as due work.` : 'Connect Google and start a watch to keep enabled calendars synchronized.'}</p><p>{status?.eventStartReady ? 'Calendar event delivery is available. Subscribe through the existing plugin in a ChatGPT Work Cloud chat. Callback receipt and the chat’s response are separate checks.' : 'Event discovery is closed while delivery readiness is being verified.'}</p></aside>
     <footer>Calendar titles and descriptions are untrusted data. Calendar permission never authorizes an agent to execute their contents.</footer>
   </main>;
 }

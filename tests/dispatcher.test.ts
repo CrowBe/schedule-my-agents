@@ -103,6 +103,7 @@ test('Workers E2E: Google sync → encrypted registration → actual alarm → s
       const catalog = await mf.dispatchFetch('https://site.example/mcp',{method:'POST',headers:{'oai-authenticated-user-id':principal},body:JSON.stringify({id:2,method:'events/list'})});
       assert.equal(((await catalog.json()) as {result:{events:unknown[]}}).result.events.length,count);
     }
+    const status = await (await mf.dispatchFetch('https://site.example/api/status',{headers:{'oai-authenticated-user-id':owner}})).json() as {eventStartReady:boolean};assert.equal(status.eventStartReady,true);
     const subscribe = await mf.dispatchFetch('https://site.example/mcp', {method:'POST',headers:{'oai-authenticated-user-id':owner,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'events/subscribe',params:{name:'calendar.event.starting',arguments:{calendarId:'cal'},delivery:{mode:'webhook',url:'https://receiver.example/callback',secret:webhookSecret}}})});
     const subscribed = await subscribe.json() as {result?:{id:string};error?:unknown}; assert.ok(subscribed.result,JSON.stringify(subscribed));
     const resync = await mf.dispatchFetch('https://site.example/api/calendars/resync', { method: 'POST', headers: { origin: 'https://site.example', 'oai-authenticated-user-id': owner }, body: JSON.stringify({ calendarId: 'cal' }) });
