@@ -1,0 +1,9 @@
+**
+!egress/
+!egress/package.json
+!egress/package-lock.json
+!egress/server.mjs
+!lib/
+!lib/calendar/
+!lib/calendar/callback-policy.ts
+!lib/calendar/tunnel-protocol.ts

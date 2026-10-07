@@ -1,0 +1,9 @@
+{
+ "name": "calendar-ciphertext-egress",
+ "version": "0.1.0",
+ "private": true,
+ "type": "module",
+ "engines": { "node": ">=24" },
+ "scripts": { "start": "node server.mjs" },
+ "dependencies": { "ws": "^8.18.3", "ipaddr.js": "2.3.0" }
+}

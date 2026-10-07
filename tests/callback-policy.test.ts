@@ -10,4 +10,5 @@ test('all DNS answers are checked and only the chosen literal IP is returned',()
  for(const values of [[],['8.8.8.8','127.0.0.1'],Array(33).fill('8.8.8.8')])assert.throws(()=>validatedAddress(values),/unsafe_destination/);
  // Each new connection calls validation again; no hostname is passed onward.
  assert.throws(()=>validatedAddress(['127.0.0.1']),/unsafe_destination/);
+ for(const value of ['134744072','0x08080808','010.010.010.010','8.8.2056','8.8','2606:4700:4700::1111%eth0'])assert.equal(publicAddress(value),false,value);
 });

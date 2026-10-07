@@ -1,4 +1,5 @@
-import { directCallbackTransport } from '../lib/calendar/callback-transport';
+import { directCallbackTransport, createPinnedCallbackTransport } from '../lib/calendar/callback-transport';
+import { openTunnelSocket } from '../lib/calendar/tunnel-socket';
 import { nativeVerificationProbe } from '../lib/calendar/callback-probe';
 import { nativeOpenAICallbackTransport } from '../lib/calendar/native-callback-transport';
 import { nativeFetchDiagnosticResponse, nativeFetchDiagnosticPage } from '../lib/calendar/native-fetch-diagnostics';
@@ -27,9 +28,13 @@ export default {
     }
 
     if (path.startsWith('/api/') || path === '/mcp') {
-      const mode = env as unknown as { MCP_CALLBACK_PROBE?: string; MCP_CALLBACK_TRANSPORT?: string };
+      const mode = env as unknown as { MCP_CALLBACK_PROBE?: string; MCP_CALLBACK_TRANSPORT?: string; CALLBACK_TUNNEL_ORIGIN?: string; CALLBACK_TUNNEL_KEY?: string };
       const callbackTransport = mode.MCP_CALLBACK_PROBE === 'true' ? nativeVerificationProbe :
-        mode.MCP_CALLBACK_TRANSPORT === 'native-openai' ? nativeOpenAICallbackTransport : directCallbackTransport;
+        mode.MCP_CALLBACK_TRANSPORT === 'native-openai' ? nativeOpenAICallbackTransport :
+        mode.MCP_CALLBACK_TRANSPORT === 'pinned-tunnel' ? createPinnedCallbackTransport((addresses, signal) => {
+          if (!mode.CALLBACK_TUNNEL_ORIGIN || !mode.CALLBACK_TUNNEL_KEY) throw new Error('tunnel_not_configured');
+          return openTunnelSocket(mode.CALLBACK_TUNNEL_ORIGIN, mode.CALLBACK_TUNNEL_KEY, addresses, signal);
+        }) : directCallbackTransport;
       try { return new CalendarService(env, { callbackTransport }).handle(request); }
       catch { return Response.json({ error: 'Persistent storage is unavailable.' }, { status: 503 }); }
     }

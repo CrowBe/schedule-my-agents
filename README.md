@@ -18,7 +18,7 @@ Timing targets at most 60 seconds of lateness and rejects wakes over five minute
 
 ## Local development
 
-Use Node 24, run `npm ci`, then `npm run dev`. For a production Worker preview, run `npm run build`, `npm run db:local`, then `npm start`. Available checks are `npm test`, `npm run typecheck`, `npm run lint` and `npm run build`.
+Use Node 24, run `npm ci` and `npm ci --prefix egress`, then `npm run dev`. For a production Worker preview, run `npm run build`, `npm run db:local`, then `npm start`. Available checks are `npm test`, `npm run typecheck`, `npm run lint` and `npm run build`.
 
 Local development uses the starter's mock ChatGPT identity. Production relies on Sites identity. Keep local previews private and secrets in runtime environment variables. Schema is in `db/schema.ts`; generated Drizzle migrations apply on Site publication.
 
@@ -51,6 +51,8 @@ Connect Google, enable a calendar, then start a watch once ingress is verified. 
 Only timed occurrences within seven days are stored. Attendees, all-day events, cancellations and history are excluded. Google expands recurrence. Disabling deletes event contents and rejects late notifications before best-effort provider cleanup. A newly shared calendar stays disabled.
 
 `POST /mcp` provides discovery, tools and `enabled_calendars`. Event discovery requires `MCP_EVENTS_READY=true`, configured alarms, verified Google ingress and current calendar consent. Subscription verification and signed delivery share a callback transport. The default uses validated-IP Go TLS; `MCP_CALLBACK_TRANSPORT=native-openai` explicitly opts into an owner-authorized native-fetch experiment restricted to `connectors.api.openai.com`. Native hostname TLS and public DNS preflight remain enforced, but connection-time IP pinning is unverified. See [live acceptance evidence](docs/issue-5-acceptance.md) and [the callback checkpoint](docs/callback-transport.md). Calendar permission never authorizes an agent to execute event text.
+
+An optional `pinned-tunnel` mode reuses the same Site-local Go TLS over an authenticated [ciphertext relay](egress/README.md). Its local runtime evidence is complete; infrastructure approval and hosted acceptance are pending. See [the remaining acceptance checkpoint](docs/pinned-egress-checkpoint.md).
 
 ## Cloudflare dispatcher
 

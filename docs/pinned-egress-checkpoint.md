@@ -1,0 +1,11 @@
+# Remaining callback acceptance — 8 October 2026
+
+Live GitHub reconciliation found exactly three open issues: #4's hosted connection-time address pinning, #6's full-predecessor acceptance gate, and umbrella #1. PR #12 is merged. The recorded real Google-to-ChatGPT demo and negative cases remain valid functional evidence, but do not establish native-fetch address pinning.
+
+Current official [MCP Events documentation](https://developers.openai.com/plugins/build/mcp-events#verify-the-callback) still requires validation at connection time and a connection to the validated address while retaining callback-hostname TLS. [Workers TCP documentation](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/#considerations) still blocks Cloudflare IP ranges. No newly documented supported Sites egress binding was found. The prior live denial remains the destination-specific evidence; this run did not repeat that production subscription experiment.
+
+An opt-in ciphertext relay implementation is prepared in [egress](../egress/README.md). It keeps TLS and signing inside the Site, uses an authenticated WebSocket for encrypted records, and dials exactly one validated public literal IP from Node. It also rejects shorthand/octal/hex addresses and scoped IPv6 so socket APIs cannot reinterpret validated values as DNS names. It uses no calendar storage and leaves the opaque alarm dispatcher unchanged. No relay has been provisioned, no Site environment has been changed, and this does not close the three issues.
+
+Local Workers, WebSocket and TLS integration passes, together with the existing calendar/subscription/outbox/runtime suite, typechecking, lint and the production Site build. Hosted relay HTTPS, a final production OpenAI subscription, signed occurrence receipt, useful ChatGPT response, cleanup and final CI are still required.
+
+`AGENTS.md` explicitly says: “Infrastructure, later audience changes and bypass credential generation require explicit authorization.” The earlier no-new-egress preference therefore remains a deployment boundary. The prepared relay may be reviewed and tested without creating infrastructure; provisioning requires approval of this concrete component and a host. Issues remain open until that boundary and hosted acceptance are resolved.
