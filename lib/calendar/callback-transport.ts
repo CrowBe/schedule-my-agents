@@ -6,6 +6,7 @@ import type { CallbackTransport } from './subscriptions.ts';
 import { publicAddress, validatedAddress } from './callback-policy.ts';
 import { callbackFailureCategory } from './callback-diagnostics.ts';
 import { resolveCallbackAddresses } from './callback-dns.ts';
+import { openCallbackSocket } from './callback-socket.ts';
 
 declare global {
  var Go: new () => { importObject: WebAssembly.Imports; run(instance: WebAssembly.Instance): Promise<void> };
@@ -32,7 +33,7 @@ export const directCallbackTransport: CallbackTransport={
   const addresses=await bounded(resolveCallbackAddresses(url.hostname,signal),signal);
   addressCount = addresses.length; nonPublicCount = addresses.filter(value => !publicAddress(value)).length;
   stage = 'address_policy';
-  const address=validatedAddress(addresses); // All answers must be public; connect only to this literal IP.
+  validatedAddress(addresses); // All answers must be public; connect only to literal IPs.
   stage = 'tls_initialize';
   await bounded(initialize(),signal);
   const allowed=new Set(['content-type','webhook-id','webhook-timestamp','webhook-signature','x-mcp-subscription-id']);
@@ -43,11 +44,10 @@ export const directCallbackTransport: CallbackTransport={
   const bytes=new TextEncoder().encode(`POST ${url.pathname}${url.search} HTTP/1.1\r\nHost: ${url.hostname}\r\nContent-Length: ${length}\r\nConnection: close\r\nAccept-Encoding: identity\r\n${lines.join('\r\n')}\r\n\r\n${body}`);
   if(length>262144||bytes.length>270336)throw new Error('Callback exceeds byte budget');
   stage = 'socket_connect';
-  const socket=connect({hostname:address,port:443},{secureTransport:'off',allowHalfOpen:false});
-  void socket.closed.catch(()=>{});
+  const socket=await openCallbackSocket(addresses,signal,address=>connect({hostname:address,port:443},{secureTransport:'off',allowHalfOpen:false}));
   const close=()=>{void socket.close().catch(()=>{});};signal.addEventListener('abort',close,{once:true});
   try{
-   await bounded(socket.opened,signal);
+   signal.throwIfAborted();
    const reader=socket.readable.getReader(),writer=socket.writable.getWriter();
    stage = 'tls_http';
    const data=await bounded(siteTLSRequest(url.hostname,roots,async()=>{const v=await reader.read();return v.done?null:v.value;},value=>writer.write(value),close,bytes,true),signal);
