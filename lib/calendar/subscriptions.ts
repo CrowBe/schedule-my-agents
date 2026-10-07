@@ -91,18 +91,23 @@ export class Subscriptions {
       const cached = old && oldSecret === p.secret && old.verified_at > started - 300_000;
       if (!cached) {
         const challenge = random() + random(), body = JSON.stringify({ type: 'verification', challenge });
+        let stage = 'transport', status: number | undefined;
         try {
           const signal = AbortSignal.timeout(10_000);
           const response = await bounded(this.transport.post(p.url, body, await signedHeaders(p.secret, 'msg_verification_' + random(), id, body, started), signal), signal);
+          stage = 'response_status'; status = response.status;
           if (!response.ok || response.redirected || this.now() >= started + 10_000) throw new Error();
           // Consume at most 4 KiB, including chunked responses; transport must honor the signal.
+          stage = 'response_body';
           const reader = response.body?.getReader(); let text = '', size = 0;
           if (!reader) throw new Error();
           try { const decoder = new TextDecoder(); while (true) { const {done, value} = await bounded(reader.read(), signal); if (done) break; size += value.byteLength; if (size > 4096) throw new Error(); text += decoder.decode(value, {stream:true}); } text += decoder.decode(); }
           finally { void reader.cancel().catch(() => {}); }
+          stage = 'challenge_echo';
           const echoed = JSON.parse(text) as {challenge?: unknown};
           if (typeof echoed.challenge !== 'string' || !await equal(challenge, echoed.challenge) || this.now() >= started + 10_000) throw new Error();
         } catch (error) {
+          console.info('calendar_callback_verification', { stage, outcome: 'failed', ...(status !== undefined ? { status } : {}) });
           throw new SubscriptionError(-32015, 'Callback verification failed.', error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name) ? 'timeout' : 'challenge_failed');
         }
       }

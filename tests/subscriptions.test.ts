@@ -5,6 +5,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { Subscriptions, SubscriptionError, signedHeaders, type CallbackTransport } from '../lib/calendar/subscriptions.ts';
 import { Store } from '../lib/calendar/store.ts';
 import { open } from '../lib/calendar/crypto.ts';
+import { callbackFailureCategory } from '../lib/calendar/callback-diagnostics.ts';
 import type { Environment, Statement } from '../lib/calendar/types.ts';
 function fixture() {
   const sql = new DatabaseSync(':memory:');
@@ -99,4 +100,26 @@ test('requested short lifetime is honored; null TTL receives finite server maxim
   const f=fixture(); const short=await f.service().subscribe('alice',{...f.params,ttlMs:1000});
   assert.equal(short.refreshBefore,new Date(f.now()+1000).toISOString());
   const finite=await f.service().subscribe('alice',{...f.params,ttlMs:null}); assert.equal(finite.refreshBefore,new Date(f.now()+86400_000).toISOString());
+});
+
+test('callback diagnostics distinguish transport, HTTP rejection and echo failure without leaking data', async () => {
+  const f = fixture(), logs: unknown[][] = [], original = console.info;
+  console.info = (...args: unknown[]) => { logs.push(args); };
+  try {
+    for (const [respond, expected] of [
+      [async () => { throw new Error('certificate invalid for private-callback.example/token'); }, { stage: 'transport', outcome: 'failed' }],
+      [async () => new Response(null, { status: 403 }), { stage: 'response_status', outcome: 'failed', status: 403 }],
+      [async () => Response.json({ challenge: 'sensitive-wrong-challenge' }), { stage: 'challenge_echo', outcome: 'failed', status: 200 }],
+    ] as const) {
+      f.setRespond(respond);
+      await assert.rejects(f.service().subscribe('alice', f.params), SubscriptionError);
+      assert.deepEqual(logs.at(-1), ['calendar_callback_verification', expected]);
+    }
+    const captured = JSON.stringify(logs);
+    for (const privateValue of ['private-callback', 'sensitive-wrong', f.params.delivery.url, f.params.delivery.secret, 'personal', 'alice']) assert.ok(!captured.includes(privateValue));
+    assert.equal(callbackFailureCategory(new Error('x509: certificate for private-callback.example/token')), 'certificate');
+    assert.equal(callbackFailureCategory(new Error('unknown private-callback.example/token')), 'unknown');
+    assert.equal(callbackFailureCategory(new Error('byte transport failed')), 'stream');
+    assert.equal(callbackFailureCategory(new DOMException('secret', 'TimeoutError')), 'timeout');
+  } finally { console.info = original; }
 });
