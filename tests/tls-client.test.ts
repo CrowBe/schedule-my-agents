@@ -14,7 +14,7 @@ const fixtures=mkdtempSync(join(tmpdir(),'site-tls-certs-'));
 execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',join(fixtures,'key.pem'),'-out',join(fixtures,'cert.pem'),'-days','2','-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost'],{stdio:'ignore'});
 const cert=readFileSync(join(fixtures,'cert.pem'),'utf8'),key=readFileSync(join(fixtures,'key.pem'),'utf8');
 let received=0; let responseMode='ok';
-const server=createServer({cert,key},socket=>{socket.on('error',()=>{});socket.once('data',()=>{received++;if(responseMode==='stall')return;if(responseMode==='body-stall'){socket.write('HTTP/1.1 200 OK\r\nContent-Length: 9999\r\nConnection: close\r\n\r\n');return;}const body=responseMode==='large'?'x'.repeat(4097):'{}';socket.end(responseMode==='redirect'?'HTTP/1.1 302 Found\r\nLocation: https://localhost/next\r\nContent-Length: 0\r\nConnection: close\r\n\r\n':`HTTP/1.1 ${/^\d+$/.test(responseMode)?responseMode:'200'} Result\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`);});});
+const server=createServer({cert,key},socket=>{socket.on('error',()=>{});socket.once('data',()=>{received++;if(responseMode==='stall')return;if(responseMode==='body-stall'||responseMode==='chunked-stall'){socket.write('HTTP/1.1 200 OK\r\n'+(responseMode==='body-stall'?'Content-Length: 9999':'Transfer-Encoding: chunked')+'\r\n\r\n');return;}const body=responseMode==='large'?'x'.repeat(4097):'{}';socket.end(responseMode==='redirect'?'HTTP/1.1 302 Found\r\nLocation: https://localhost/next\r\nContent-Length: 0\r\nConnection: close\r\n\r\n':`HTTP/1.1 ${/^\d+$/.test(responseMode)?responseMode:'200'} Result\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`);});});
 server.on('tlsClientError',()=>{});
 async function listen(){if(!server.listening)await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));return (server.address() as {port:number}).port;}
 test('Go standard TLS over raw TCP verifies certificate and hostname before sending application data',async()=>{
@@ -42,9 +42,10 @@ test('Go standard TLS over raw TCP verifies certificate and hostname before send
   }
   responseMode='ok';const structured=await request('localhost',cert,false,true);assert.equal(structured[0]*256+structured[1],200);assert.equal(new TextDecoder().decode(structured.slice(2)),'{}');
   responseMode='large';await assert.rejects(request('localhost',cert),/response too large/);
-  for (const mode of ['large', 'body-stall']) {
-    responseMode=mode;const data=await request('localhost',cert,false,true,true);
+  for (const mode of ['large', 'body-stall', 'chunked-stall']) {
+    responseMode=mode;const started=performance.now();const data=await request('localhost',cert,false,true,true);
     assert.equal(data[0]*256+data[1],200);assert.equal(data.length,2);
+    assert.ok(performance.now()-started < 1000, 'Status-only receipt must finish before the five-second body/socket timeout');
   }
   responseMode='stall';await assert.rejects(request('localhost',cert));responseMode='ok';
   execFileSync('openssl',['req','-new','-key',join(fixtures,'key.pem'),'-out',join(fixtures,'expired.csr'),'-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost'],{stdio:'ignore'});
