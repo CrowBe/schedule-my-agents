@@ -1,6 +1,6 @@
 # Schedule my agents
 
-Use Google Calendar as the scheduling interface for an agent through a publicly reachable ChatGPT Site with authenticated setup and owner-scoped calendar data. This prototype currently provides Google OAuth, calendar discovery, explicit consent, watch/sync code and an owner-scoped MCP calendar-list tool. Opaque durable start alarms and Google revalidation produce due work; subscriber delivery is planned.
+Use Google Calendar as the scheduling interface for an agent through a publicly reachable ChatGPT Site with authenticated setup and owner-scoped calendar data. This prototype currently provides Google OAuth, calendar discovery, explicit consent, watch/sync code and an owner-scoped MCP calendar-list tool. Opaque durable start alarms and Google revalidation produce due work; signed subscriber delivery uses a persisted outbox and the same durable alarms.
 
 Live OAuth/discovery, persisted consent, real watch creation and Google push create/edit/delete synchronization are verified. The user authorized public hosting to unblock Google ingress; setup and calendar data remain authenticated and owner scoped. See [VERIFICATION.md](VERIFICATION.md) for current evidence and [docs/private-ingress.md](docs/private-ingress.md) for issue #2.
 
@@ -31,17 +31,23 @@ Connect Google, enable a calendar, then start a watch once ingress is verified. 
 
 ## Read next
 
-- [ARCHITECTURE.md](ARCHITECTURE.md): implemented seams and planned delivery.
+- [ARCHITECTURE.md](ARCHITECTURE.md): implemented provider, timing and delivery boundaries.
 - [GLOSSARY.md](GLOSSARY.md): calendar and authorization vocabulary.
 - [AGENTS.md](AGENTS.md): contribution boundaries and completion checks.
 - [docs/brief.md](docs/brief.md): original product brief.
 
 Only timed occurrences within seven days are stored. Attendees, all-day events, cancellations and history are excluded. Google expands recurrence. Disabling deletes event contents and rejects late notifications before best-effort provider cleanup. A newly shared calendar stays disabled.
 
-`POST /mcp` provides discovery, tools and `enabled_calendars`. The event catalog remains empty. Subscription lifecycle code is persisted and tested, and the Site has a direct validated-IP Go TLS adapter. Real ChatGPT callback acceptance and durable delivery remain outstanding; see [the callback checkpoint](docs/callback-transport.md). Calendar permission never authorizes an agent to execute event text.
+`POST /mcp` provides discovery, tools and `enabled_calendars`. Event discovery requires `MCP_EVENTS_READY=true`, configured alarms, verified Google ingress and current calendar consent. Subscription verification and signed delivery share a callback transport. The default uses validated-IP Go TLS; `MCP_CALLBACK_TRANSPORT=native-openai` explicitly opts into an owner-authorized native-fetch experiment restricted to `connectors.api.openai.com`. Native hostname TLS and public DNS preflight remain enforced, but connection-time IP pinning is unverified. See [live acceptance evidence](docs/issue-5-acceptance.md) and [the callback checkpoint](docs/callback-transport.md). Calendar permission never authorizes an agent to execute event text.
 
 ## Cloudflare dispatcher
 
 The same repository contains `dispatcher/`, an independently built Worker with SQLite Durable Objects. See [dispatcher/README.md](dispatcher/README.md). Site deployment packages its own build output; the dispatcher is deployed separately with authenticated `cf`.
 
 Site runtime needs `DISPATCHER_ORIGIN`, secret `ALARM_ENCRYPTION_KEY` (32-byte base64, Site only), secret `ALARM_REGISTRATION_KEY` and secret `ALARM_CALLBACK_KEY`. The latter two keys are shared with the dispatcher. Do not log envelopes, keys or calendar content. After configuration/publication, Resync registers existing events; subsequent Google changes register fresh alarms.
+
+## Signed delivery rollout
+
+Apply additive migration `0005_wooden_hitman.sql` before deploying the signed-outbox source. Existing subscriptions and alarm jobs are retained. Keep `MCP_EVENTS_READY=false` until migration and complete runtime delivery checks pass; then enable it for the live acceptance check and rescan the existing plugin event catalog. Discovery also requires verified ingress, configured alarms and validated callback transport. No dispatcher deployment or additional service is needed for this slice.
+
+Delivery has a five-minute lifetime and at most six claimed attempts per subscriber. Retries preserve the logical ID and body and use fresh signatures, including both keys during rotation. A lost acknowledgement may duplicate receipt; HTTP 2xx proves receipt only, not agent action. Edits, cancellation and revocation stop new dispatch; accepted callbacks cannot be recalled. See [delivery guarantees and local evidence](docs/signed-outbox.md). Watch expiry still requires manual renewal, and missed notifications require Resync now.

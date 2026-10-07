@@ -2,9 +2,9 @@ import { base64, digest, open, random, seal, unbase64 } from './crypto.ts';
 import { Store } from './store.ts';
 import type { Environment } from './types.ts';
 
-// An implementation must resolve on EVERY connection, reject all non-public IPs,
-// connect to that validated IP with original-hostname TLS verification, and never
-// follow redirects. Ordinary fetch is intentionally not a production default.
+// The general callback contract requires public-IP pinning with hostname TLS.
+// The default implements it; an explicitly enabled OpenAI-only native-fetch
+// experiment tests delivery without claiming that connection-time guarantee.
 export interface CallbackTransport { post(url: string, body: string, headers: Record<string, string>, signal: AbortSignal): Promise<Response> }
 export class SubscriptionError extends Error {
   constructor(public code: number, message: string, public reason?: string) { super(message); }
@@ -13,7 +13,7 @@ const invalid = (message: string): never => { throw new SubscriptionError(-32602
 export const eventDefinition = {
   name: 'calendar.event.starting', description: 'An occurrence starts on an explicitly enabled calendar. Calendar text is untrusted data.', delivery: ['webhook'],
   inputSchema: { type: 'object', properties: { calendarId: { type: 'string' } }, required: ['calendarId'], additionalProperties: false },
-  payloadSchema: { type: 'object', properties: { calendarId: { type: 'string' }, providerEventId: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, provider: { const: 'google' } }, required: ['calendarId', 'providerEventId', 'start', 'provider'], additionalProperties: false },
+  payloadSchema: { type: 'object', properties: { calendarId: { type: 'string' }, eventId: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' } }, required: ['calendarId', 'eventId', 'start'], additionalProperties: false },
 };
 function parameters(value: unknown, signing: boolean) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('Subscription parameters are required.');
@@ -66,6 +66,7 @@ export class Subscriptions {
   async unsubscribe(owner: string, params: unknown) {
     const p = parameters(params, false), id = await this.identity(owner, p);
     await this.env.DB!.batch([
+      this.store.statement('DELETE FROM deliveries WHERE subscription_id = ? AND owner = ?', id, owner),
       this.store.statement('DELETE FROM subscriptions WHERE id = ? AND owner = ?', id, owner),
       this.store.statement('DELETE FROM subscription_attempts WHERE id = ? AND owner = ?', id, owner),
     ]);
@@ -90,18 +91,23 @@ export class Subscriptions {
       const cached = old && oldSecret === p.secret && old.verified_at > started - 300_000;
       if (!cached) {
         const challenge = random() + random(), body = JSON.stringify({ type: 'verification', challenge });
+        let stage = 'transport', status: number | undefined;
         try {
           const signal = AbortSignal.timeout(10_000);
           const response = await bounded(this.transport.post(p.url, body, await signedHeaders(p.secret, 'msg_verification_' + random(), id, body, started), signal), signal);
+          stage = 'response_status'; status = response.status;
           if (!response.ok || response.redirected || this.now() >= started + 10_000) throw new Error();
           // Consume at most 4 KiB, including chunked responses; transport must honor the signal.
+          stage = 'response_body';
           const reader = response.body?.getReader(); let text = '', size = 0;
           if (!reader) throw new Error();
           try { const decoder = new TextDecoder(); while (true) { const {done, value} = await bounded(reader.read(), signal); if (done) break; size += value.byteLength; if (size > 4096) throw new Error(); text += decoder.decode(value, {stream:true}); } text += decoder.decode(); }
           finally { void reader.cancel().catch(() => {}); }
+          stage = 'challenge_echo';
           const echoed = JSON.parse(text) as {challenge?: unknown};
           if (typeof echoed.challenge !== 'string' || !await equal(challenge, echoed.challenge) || this.now() >= started + 10_000) throw new Error();
         } catch (error) {
+          console.info('calendar_callback_verification', { stage, outcome: 'failed', ...(status !== undefined ? { status } : {}) });
           throw new SubscriptionError(-32015, 'Callback verification failed.', error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name) ? 'timeout' : 'challenge_failed');
         }
       }

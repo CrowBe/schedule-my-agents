@@ -4,6 +4,7 @@ export type WatchRow = { id: string; owner: string; calendar_id: string; generat
 export class Store {
   constructor(private db: Database | undefined) { if (!db) throw new AppError(503, 'Persistent storage is unavailable.'); }
   statement(sql: string, ...values: unknown[]) { return this.db!.prepare(sql).bind(...values); }
+  async batch(statements: ReturnType<Store["statement"]>[]) { await this.db!.batch(statements); }
   async run(sql: string, ...values: unknown[]) { await this.statement(sql, ...values).run(); }
   async first<T>(sql: string, ...values: unknown[]) { return this.statement(sql, ...values).first<T>(); }
   async all<T>(sql: string, ...values: unknown[]) { return (await this.statement(sql, ...values).all<T>()).results; }
@@ -16,6 +17,7 @@ export class Store {
   }
   async disconnect(owner: string) {
     await this.db!.batch([
+      this.statement('DELETE FROM deliveries WHERE owner = ?', owner),
       this.statement('DELETE FROM subscriptions WHERE owner = ?', owner),
       this.statement('DELETE FROM subscription_attempts WHERE owner = ?', owner),
       this.statement('DELETE FROM connections WHERE owner = ?', owner),
@@ -30,6 +32,7 @@ export class Store {
     await this.db!.batch([
       this.statement('UPDATE calendars SET enabled = 0, generation = ? WHERE owner = ? AND calendar_id = ?', generation, owner, id),
       this.statement("UPDATE watches SET status = 'revoked' WHERE owner = ? AND calendar_id = ?", owner, id),
+      this.statement('DELETE FROM deliveries WHERE owner = ? AND calendar_id = ?', owner, id),
       this.statement('DELETE FROM subscriptions WHERE owner = ? AND calendar_id = ?', owner, id),
       this.statement('DELETE FROM subscription_attempts WHERE owner = ? AND calendar_id = ?', owner, id),
       this.statement('DELETE FROM events WHERE owner = ? AND calendar_id = ?', owner, id),
@@ -48,6 +51,7 @@ export class Store {
   }
   async claimDue(id: string, owner: string, calendarId: string, generation: string, event: CalendarEvent, dueAt: number, now: number, expiresAt: number) {
     // Bounded retention. Expired envelopes cannot replay after this ledger is removed.
+    await this.run('DELETE FROM deliveries WHERE outbox_id IN (SELECT id FROM occurrence_outbox WHERE created_at < ? ORDER BY created_at LIMIT 100)', now - 7 * 86400_000);
     await this.run('DELETE FROM occurrence_outbox WHERE id IN (SELECT id FROM occurrence_outbox WHERE created_at < ? ORDER BY created_at LIMIT 100)', now - 7 * 86400_000);
     const row = await this.first<{id: string}>(`INSERT INTO occurrence_outbox (id, owner, calendar_id, generation, provider_event_id, due_at, created_at, expires_at, payload, status)
       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending'

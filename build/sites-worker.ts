@@ -1,4 +1,7 @@
 import { directCallbackTransport } from '../lib/calendar/callback-transport';
+import { nativeVerificationProbe } from '../lib/calendar/callback-probe';
+import { nativeOpenAICallbackTransport } from '../lib/calendar/native-callback-transport';
+import { nativeFetchDiagnosticResponse, nativeFetchDiagnosticPage } from '../lib/calendar/native-fetch-diagnostics';
 import { CalendarService } from "../lib/calendar/service";
 import handler from "vinext/server/fetch-handler";
 import { runWithConnectorBinding } from "../lib/connector-context";
@@ -7,6 +10,12 @@ import type { ConnectorBinding } from "../lib/connector-contract.mjs";
 export default {
   async fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext<{ CONNECTORS?: ConnectorBinding }>) {
     const path = new URL(request.url).pathname;
+    if (path === '/diagnostics/native-fetch') {
+      return nativeFetchDiagnosticPage(request);
+    }
+    if (path === '/api/diagnostics/native-fetch') {
+      return nativeFetchDiagnosticResponse(request);
+    }
     // Fixed synthetic diagnostic; never accepts a destination, headers or private payload.
     if (path === '/api/diagnostics/tls' && request.method === 'GET') {
       if (!request.headers.get('oai-authenticated-user-id')) return Response.json({ error: 'Sign in.' }, { status: 401 });
@@ -18,7 +27,10 @@ export default {
     }
 
     if (path.startsWith('/api/') || path === '/mcp') {
-      try { return new CalendarService(env, { callbackTransport: directCallbackTransport }).handle(request); }
+      const mode = env as unknown as { MCP_CALLBACK_PROBE?: string; MCP_CALLBACK_TRANSPORT?: string };
+      const callbackTransport = mode.MCP_CALLBACK_PROBE === 'true' ? nativeVerificationProbe :
+        mode.MCP_CALLBACK_TRANSPORT === 'native-openai' ? nativeOpenAICallbackTransport : directCallbackTransport;
+      try { return new CalendarService(env, { callbackTransport }).handle(request); }
       catch { return Response.json({ error: 'Persistent storage is unavailable.' }, { status: 503 }); }
     }
     let binding = ctx.props?.CONNECTORS;

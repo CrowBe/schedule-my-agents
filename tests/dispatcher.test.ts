@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { build } from 'esbuild';
 import { Miniflare } from 'miniflare';
+import { createHmac } from 'node:crypto';
 import { seal } from '../lib/calendar/crypto.ts';
 import { CALLBACK_PATH, LATE_WINDOW, mac, signedHeaders, verified, type AlarmJob } from '../shared/alarm.ts';
 
@@ -48,15 +49,26 @@ test('real SQLite Durable Object alarm survives runtime restart; failed/redirect
   } finally { await mf.dispose(); rmSync(persist, { recursive: true, force: true }); }
 });
 
-test('Workers E2E: Google sync → encrypted registration → actual alarm → signed Site callback → live Google lookup → D1 due work', async () => {
+test('Workers E2E: Google sync → encrypted registration → actual alarm → signed Site callback → live Google lookup → D1 signed delivery and retry across runtime restart', async () => {
   const dispatcher = await dispatcherBundle();
-  const site = (await build({ stdin: { contents: `import { CalendarService } from './lib/calendar/service.ts'; export default { fetch(r,e) { return new CalendarService(e).handle(r); } };`, resolveDir: process.cwd(), sourcefile: 'alarm-site.ts' }, bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022' })).outputFiles[0].text;
+  const site = (await build({ stdin: { contents: `import { CalendarService } from './lib/calendar/service.ts'; export default { fetch(r,e) { return new CalendarService(e,{callbackTransport:{post:(url,body,headers,signal)=>fetch(url,{method:'POST',body,headers,signal,redirect:'manual'})}}).handle(r); } };`, resolveDir: process.cwd(), sourcefile: 'alarm-site.ts' }, bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022' })).outputFiles[0].text;
   const registration = btoa('r'.repeat(32)), callback = btoa('c'.repeat(32)), encryption = btoa('e'.repeat(32));
   const dueAt = Date.now() + 3000;
   const event = { id: 'private-event', summary: 'Only the Site sees this', start: { dateTime: new Date(dueAt).toISOString() } };
-  let lookup = 0; let registrationCount = 0;
+  let lookup = 0; let registrationCount = 0; const delivered: {body:string; id:string; timestamp:string}[] = [];
+  const webhookSecret = 'whsec_' + btoa('s'.repeat(32));
   const outboundService = async (request: Request) => {
     const url = new URL(request.url);
+    if (url.origin === 'https://receiver.example') {
+      const body = await request.text(), id = request.headers.get('webhook-id')!, timestamp = request.headers.get('webhook-timestamp')!;
+      const expected = 'v1,' + createHmac('sha256', Buffer.from(webhookSecret.slice(6),'base64')).update(`${id}.${timestamp}.${body}`).digest('base64');
+      assert.equal(request.headers.get('webhook-signature'),expected);
+      const parsed = JSON.parse(body);
+      if (parsed.type === 'verification') return Response.json({challenge:parsed.challenge});
+      assert.equal(parsed.eventId,id); assert.equal(parsed.data.eventId,'private-event');
+      delivered.push({body,id,timestamp});
+      return new Response(null,{status:delivered.length===1?503:204});
+    }
     if (url.origin === 'https://alarm.example') {
       const body = await request.text(); assert.ok(!body.includes('private-event')); assert.ok(!body.includes('private-owner'));
       registrationCount++;
@@ -69,13 +81,15 @@ test('Workers E2E: Google sync → encrypted registration → actual alarm → s
     if (url.pathname.endsWith('/events')) return Response.json({ items: [event] });
     throw new Error('Unexpected outbound request.');
   };
-  const mf = new Miniflare({ cf: false, workers: [
+  const persist = mkdtempSync(join(tmpdir(), 'signed-delivery-'));
+  const create = () => new Miniflare({ cf: false, d1Persist: join(persist,'d1'), durableObjectsPersist: join(persist,'alarms'), workers: [
     { name: 'site', modules: true, script: site, compatibilityDate: '2026-05-15', d1Databases: { DB: 'site-alarm-test' },
-      bindings: { SITE_ORIGIN: 'https://site.example', DISPATCHER_ORIGIN: 'https://alarm.example', ALARM_REGISTRATION_KEY: registration, ALARM_CALLBACK_KEY: callback, ALARM_ENCRYPTION_KEY: encryption,
+      bindings: { MCP_EVENTS_READY:'true', GOOGLE_WEBHOOK_VERIFIED:'true', SITE_ORIGIN: 'https://site.example', DISPATCHER_ORIGIN: 'https://alarm.example', ALARM_REGISTRATION_KEY: registration, ALARM_CALLBACK_KEY: callback, ALARM_ENCRYPTION_KEY: encryption,
         TOKEN_ENCRYPTION_KEY: encryption, GOOGLE_CLIENT_ID: 'client', GOOGLE_CLIENT_SECRET: 'secret' }, outboundService },
     { name: 'dispatcher', modules: true, script: dispatcher, compatibilityDate: '2026-05-15', durableObjects: { ALARMS: { className: 'Alarm', useSQLite: true } },
       bindings: { REGISTRATION_KEY: registration, CALLBACK_KEY: callback, CALLBACK_URL: 'https://site.example' + CALLBACK_PATH }, outboundService },
   ] });
+  let mf = create();
   try {
     const db = await mf.getD1Database('DB', 'site');
     for (const file of readdirSync('drizzle').filter(f => f.endsWith('.sql')).sort()) {
@@ -85,14 +99,27 @@ test('Workers E2E: Google sync → encrypted registration → actual alarm → s
     await db.prepare('INSERT INTO connections VALUES (?, ?, ?)').bind(owner, await seal('refresh', encryption, owner), Date.now()).run();
     await db.prepare('INSERT INTO calendars VALUES (?, ?, ?, 1, ?)').bind(owner, 'cal', 'Personal', 'grant').run();
     await db.prepare("INSERT INTO watches (id, owner, calendar_id, generation, token_hash, resource_id, expiration, status) VALUES ('watch', ?, 'cal', 'grant', 'hash', 'resource', ?, 'active')").bind(owner, Date.now() + 3600_000).run();
+    for(const [principal, count] of [[owner,1],['other',0]] as const) {
+      const catalog = await mf.dispatchFetch('https://site.example/mcp',{method:'POST',headers:{'oai-authenticated-user-id':principal},body:JSON.stringify({id:2,method:'events/list'})});
+      assert.equal(((await catalog.json()) as {result:{events:unknown[]}}).result.events.length,count);
+    }
+    const status = await (await mf.dispatchFetch('https://site.example/api/status',{headers:{'oai-authenticated-user-id':owner}})).json() as {eventStartReady:boolean};assert.equal(status.eventStartReady,true);
+    const subscribe = await mf.dispatchFetch('https://site.example/mcp', {method:'POST',headers:{'oai-authenticated-user-id':owner,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'events/subscribe',params:{name:'calendar.event.starting',arguments:{calendarId:'cal'},delivery:{mode:'webhook',url:'https://receiver.example/callback',secret:webhookSecret}}})});
+    const subscribed = await subscribe.json() as {result?:{id:string};error?:unknown}; assert.ok(subscribed.result,JSON.stringify(subscribed));
     const resync = await mf.dispatchFetch('https://site.example/api/calendars/resync', { method: 'POST', headers: { origin: 'https://site.example', 'oai-authenticated-user-id': owner }, body: JSON.stringify({ calendarId: 'cal' }) });
     assert.equal(resync.status, 200, await resync.text()); assert.equal(registrationCount, 1);
     // The pending snapshot is not the scheduler's source of truth.
     await db.prepare('DELETE FROM events').run();
     await waitFor(async () => Boolean(await db.prepare('SELECT id FROM occurrence_outbox').first()));
-    assert.equal(lookup, 1);
-    const row = await db.prepare('SELECT * FROM occurrence_outbox').first<{due_at: number; created_at: number; payload: string}>();
+    await waitFor(async()=>Boolean(await db.prepare("SELECT subscription_id FROM deliveries WHERE attempts = 1 AND status = 'pending' AND lease_until = 0").first()));
+    await new Promise(resolve=>setTimeout(resolve,100));
+    await mf.dispose(); mf = create();
+    const recovered = await mf.getD1Database('DB','site');
+    await waitFor(async()=>Boolean(await recovered.prepare("SELECT subscription_id FROM deliveries WHERE status = 'accepted'").first()));
+    assert.equal(delivered.length,2);assert.equal(delivered[0].body,delivered[1].body);assert.equal(delivered[0].id,delivered[1].id);assert.notEqual(delivered[0].timestamp,delivered[1].timestamp);
+    assert.ok(lookup >= 2);
+    const row = await recovered.prepare('SELECT * FROM occurrence_outbox').first<{due_at: number; created_at: number; payload: string}>();
     assert.equal(row!.due_at, dueAt); assert.ok(row!.created_at >= dueAt); assert.ok(row!.created_at - dueAt < 60_000);
     assert.equal(JSON.parse(row!.payload).title, event.summary);
-  } finally { await mf.dispose(); }
+  } finally { await mf.dispose(); rmSync(persist,{recursive:true,force:true}); }
 });
