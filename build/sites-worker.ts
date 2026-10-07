@@ -1,4 +1,5 @@
 import { directCallbackTransport } from '../lib/calendar/callback-transport';
+import { nativeVerificationProbe } from '../lib/calendar/callback-probe';
 import { CalendarService } from "../lib/calendar/service";
 import handler from "vinext/server/fetch-handler";
 import { runWithConnectorBinding } from "../lib/connector-context";
@@ -18,7 +19,7 @@ export default {
     }
 
     if (path.startsWith('/api/') || path === '/mcp') {
-      try { return new CalendarService(env, { callbackTransport: directCallbackTransport }).handle(request); }
+      try { return new CalendarService(env, { callbackTransport: (env as unknown as { MCP_CALLBACK_PROBE?: string }).MCP_CALLBACK_PROBE === 'true' ? nativeVerificationProbe : directCallbackTransport }).handle(request); }
       catch { return Response.json({ error: 'Persistent storage is unavailable.' }, { status: 503 }); }
     }
     let binding = ctx.props?.CONNECTORS;
