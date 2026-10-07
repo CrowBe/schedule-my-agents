@@ -1,3 +1,11 @@
+# Issue #5 remaining acceptance checkpoint — 6 October 2026
+
+Added correlated redacted audit records and an actual Workers/D1 queued-delivery race test. The test first persists a failed delivery, pauses the next Google lookup, and disables/disconnects/unsubscribes/expires/edits/cancels while it is in flight. No second callback is sent. Registration logs join channel/message, opaque occurrence and alarm/outbox tags; attempt logs add subscription tag, attempt and result without private content. All 52 tests, typecheck, lint and production build pass.
+
+Site version 12 published successfully from source `a430d921e6b7db5a0a66932b373de2825ee894f6` with environment revision 6. Live schema inspection confirms `deliveries` and retained calendar/subscription tables. The existing MCP capability and public audience are preserved. `MCP_EVENTS_READY=true` enables discovery after the complete application path passed local runtime checks and the hosted migration succeeded. The authenticated browser retains Google connection, the enabled Personal calendar and its active watch, and shows event delivery available. Its status and calendar requests returned HTTP 200 (requests `e370231ec110d839fa23cd5f62a3d820` and `ba12bf836762e2b6fe93df08864f908e`).
+
+Live D1 inspection still found zero subscriptions. No actual ChatGPT challenge or Google-to-subscriber callback acknowledgement is claimed. The new synthetic TLS diagnostic navigation was blocked by the browser before an observable diagnostic invocation; prior hosted TLS evidence remains historical. The remaining #5 gate is a supported Work Cloud chat subscribing through the existing plugin, followed by a disposable real Google event and measured signed callback acknowledgement. An actual chat response belongs to #6. No replacement plugin, callback receiver infrastructure, bypass credential or calendar write was created.
+
 # Signed outbox implementation — 6 October 2026
 
 The local delivery path now connects actual Workers/D1 and SQLite Durable Object alarms to a test receiver through MCP subscription verification. The receiver independently verifies signatures, returns a transient 503, and accepts a retry after both runtimes restart. ID and body remain identical; signing time changes. Real Go TLS tests verify terminal HTTP status propagation. All 50 tests, typecheck, lint and production build pass. These are local runtime/fake-provider results. Hosted migration, real subscriber acceptance and a ChatGPT response remain unverified; readiness defaults closed. See [delivery checkpoint](docs/signed-outbox.md).
@@ -119,3 +127,9 @@ After deployment of source commit `840e25ad17ec9ea4cce9559d5ecb19397b62aed5`, th
 4. Implement persisted, authorized MCP subscriptions and signed delivery from due occurrences, then demonstrate a timed occurrence waking a Work Cloud chat. Until then the hypothesis remains unvalidated. [The MVP roadmap](docs/mvp.md) links the implementation issues and their live acceptance checks.
 
 Source of Sites runtime, persistence, identity and hosting constraints: installed Sites plugin v0.1.75 `sites-building`, `sites-hosting`, `sites-mcp` skills and bundled starter. [Public Sites overview](https://learn.chatgpt.com/workflows/sites) provides user-facing context; no unsupported manifest fields or inferred timer bindings have been added.
+
+## Work Cloud subscription failure, 7 October 2026
+
+The installed plugin successfully listed the enabled calendar and exposed the event schema. In the Work chat `Load Calendar Tools`, task creation returned an unexpected task-service error twice. Production requests at 04:02:32 and 04:02:48 UTC each reached `events/subscribe`, then `events/unsubscribe` roughly 250 ms later. Both HTTP responses were 200; these logs do not distinguish a JSON-RPC rejection from a successful subscription followed by task rollback. No active subscription or real callback acceptance is established.
+
+Added bounded `calendar_subscription` audit outcomes at the MCP boundary: accepted, or rejected with the numeric protocol code and fixed categorized reason. Logs exclude request parameters, owners, calendar IDs, callback URLs, signing secrets and challenge bodies. A fresh Work Cloud attempt is required to classify the failure. All 52 tests, typecheck, lint and production build pass after the logging change.
