@@ -234,9 +234,16 @@ export class CalendarService {
     }
     if (rpc.method === 'events/subscribe' || rpc.method === 'events/unsubscribe') {
       const subscriptions = new Subscriptions(this.store, this.env, this.now, this.dependencies.callbackTransport);
-      try { return reply(rpc.method === 'events/subscribe' ? await subscriptions.subscribe(owner, rpc.params) : await subscriptions.unsubscribe(owner, rpc.params)); }
+      try {
+        const result = rpc.method === 'events/subscribe' ? await subscriptions.subscribe(owner, rpc.params) : await subscriptions.unsubscribe(owner, rpc.params);
+        console.info('calendar_subscription', { method: rpc.method, outcome: 'accepted' });
+        return reply(result);
+      }
       catch (e) {
-        if (e instanceof SubscriptionError) return json({ jsonrpc: '2.0', id: rpc.id ?? null, error: { code: e.code, message: e.message, ...(e.reason ? { data: { reason: e.reason } } : {}) } });
+        if (e instanceof SubscriptionError) {
+          console.info('calendar_subscription', { method: rpc.method, outcome: 'rejected', code: e.code, reason: e.reason ?? 'invalid_or_unauthorized' });
+          return json({ jsonrpc: '2.0', id: rpc.id ?? null, error: { code: e.code, message: e.message, ...(e.reason ? { data: { reason: e.reason } } : {}) } });
+        }
         throw e;
       }
     }

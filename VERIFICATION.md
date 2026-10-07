@@ -127,3 +127,9 @@ After deployment of source commit `840e25ad17ec9ea4cce9559d5ecb19397b62aed5`, th
 4. Implement persisted, authorized MCP subscriptions and signed delivery from due occurrences, then demonstrate a timed occurrence waking a Work Cloud chat. Until then the hypothesis remains unvalidated. [The MVP roadmap](docs/mvp.md) links the implementation issues and their live acceptance checks.
 
 Source of Sites runtime, persistence, identity and hosting constraints: installed Sites plugin v0.1.75 `sites-building`, `sites-hosting`, `sites-mcp` skills and bundled starter. [Public Sites overview](https://learn.chatgpt.com/workflows/sites) provides user-facing context; no unsupported manifest fields or inferred timer bindings have been added.
+
+## Work Cloud subscription failure, 7 October 2026
+
+The installed plugin successfully listed the enabled calendar and exposed the event schema. In the Work chat `Load Calendar Tools`, task creation returned an unexpected task-service error twice. Production requests at 04:02:32 and 04:02:48 UTC each reached `events/subscribe`, then `events/unsubscribe` roughly 250 ms later. Both HTTP responses were 200; these logs do not distinguish a JSON-RPC rejection from a successful subscription followed by task rollback. No active subscription or real callback acceptance is established.
+
+Added bounded `calendar_subscription` audit outcomes at the MCP boundary: accepted, or rejected with the numeric protocol code and fixed categorized reason. Logs exclude request parameters, owners, calendar IDs, callback URLs, signing secrets and challenge bodies. A fresh Work Cloud attempt is required to classify the failure. All 52 tests, typecheck, lint and production build pass after the logging change.
