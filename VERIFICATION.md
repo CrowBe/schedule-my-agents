@@ -1,3 +1,9 @@
+# Real MCP Event delivery and ChatGPT response — 7 October 2026
+
+Site version 23, environment revision 11, uses the explicitly owner-authorized `native-openai` callback transport and enabled event catalog. A real signed challenge persisted one subscription. A disposable Google event synced through manual recovery and the subsequent real Google push registered the same opaque alarm. At 10:54:04.273 UTC the durable alarm produced due work (4,273 ms lateness); at 10:54:06.776 the first signed delivery returned HTTP 200 and D1 recorded acceptance with its body cleared. ChatGPT reported the test title and 21:54 Sydney start time in the original Work Cloud chat. The task was paused, subscription/delivery rows were removed, and the disposable calendar event was deleted.
+
+All 65 tests, typecheck, lint and production build pass. Full timestamps, redacted audit linkage, cleanup and the unverified native-fetch connection-time IP-pinning limitation are in [Issue #5 live acceptance](docs/issue-5-acceptance.md). No new service, plugin, audience change or bypass token was used. The following checkpoints are historical.
+
 # Issue #5 remaining acceptance checkpoint — 6 October 2026
 
 Added correlated redacted audit records and an actual Workers/D1 queued-delivery race test. The test first persists a failed delivery, pauses the next Google lookup, and disables/disconnects/unsubscribes/expires/edits/cancels while it is in flight. No second callback is sent. Registration logs join channel/message, opaque occurrence and alarm/outbox tags; attempt logs add subscription tag, attempt and result without private content. All 52 tests, typecheck, lint and production build pass.

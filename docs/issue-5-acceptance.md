@@ -1,49 +1,37 @@
-# Issue #5 acceptance checkpoint — 7 October 2026
+# Issue #5 live acceptance — 7 October 2026
 
-Status: owner-authorized native-fetch live acceptance test in progress, not complete.
+Functional delivery acceptance is verified on the owner's real Site/plugin using the explicitly authorized OpenAI-only native-fetch mode. Code review remains pending. The broader connection-time IP-pinning guarantee is unverified and is not claimed by this experiment.
 
-The owner explicitly authorized proceeding to real MCP Events on their own Site/plugin rather than blocking that experiment on a platform DNS guarantee. `MCP_CALLBACK_TRANSPORT=native-openai` opts into native HTTPS only for `connectors.api.openai.com`. Both challenge and delivery use this transport, retain public DNS preflight, hostname TLS, manual redirects, signing, resource bounds and current owner/calendar authority. Native fetch's connection-time public-IP validation remains unverified; successful delivery will establish functional acceptance, not that broader guarantee. The general pinned transport remains the default.
+## Configuration and scope
 
-The following 10:28 UTC evidence is the checkpoint before that instruction; live test results will be recorded below.
+Site version 23 published source `6cfafaae5149c03963768d8a8985efe1408a0ce8` with environment revision 11: `MCP_CALLBACK_TRANSPORT=native-openai`, `MCP_EVENTS_READY=true`, and no `MCP_CALLBACK_PROBE`. The existing Site, plugin, public audience, Google connection, explicit Personal calendar consent, D1 and opaque durable dispatcher were reused. No new infrastructure or bypass credential was introduced.
 
-Reviewed the complete [Issue #5](https://github.com/CrowBe/schedule-my-agents/issues/5), current implementation, tests and live Site at 10:28 UTC. No runtime code, catalog readiness, audience, calendar data or infrastructure was changed during this continuation. The original issue-5 checkout remains separate from this diagnostic branch.
+The owner explicitly asked to proceed to real MCP Events on their own Site/plugin instead of blocking that test on a platform DNS guarantee. Native HTTPS supports only the exact observed host `connectors.api.openai.com`, with public DNS preflight, native hostname TLS, manual redirects, signatures and request/response/time bounds. Both verification and delivery use the same transport. The general validated-IP Go TLS transport remains the default when this opt-in is absent.
 
-## Acceptance evidence
+## Real acceptance timeline
 
-| Issue requirement | Available evidence | Remaining acceptance |
-| --- | --- | --- |
-| Real synced occurrence reaches signed callback and records acknowledgement | Durable due-work and signed delivery implemented; fake-provider Workers/D1 + real Durable Object alarm integration passes | No real hosted subscribed callback receipt |
-| Exact-body independent signatures, headers, identity and payload bound | Independent receiver tests, UTF-8 256 KiB rejection, rotation and logical/provider ID separation pass | Real subscriber acceptance requires the callback connection boundary |
-| One logical event under concurrency and retries with fresh signing | Persisted immutable bodies/IDs, unique audience rows, leases and bounded backoff tested | Hosted complete-path receipt is outstanding |
-| Crash recovery, pending/accepted/exhausted/terminal handling | SQLite/runtime restart, lost acknowledgement, terminal 3xx/410/413 and bounded attempts covered | No claim of exactly-once agent execution |
-| Current authority and occurrence revision checked on each attempt | Edit/cancel/disable/disconnect/unsubscribe/expiry and queued Workers race tests pass | Existing network-effect race remains documented |
-| Redacted audit linkage | Provider notification, occurrence and delivery audits implemented with opaque tags | Real hosted provider-to-delivery audit chain is outstanding |
-| Production catalog activated only when complete path is ready | Gate stays false; actual-runtime integration covers fake-provider delivery, retry, restart and revocation | Catalog intentionally not activated; safe transport and real acceptance outstanding |
+All times are UTC on 7 October 2026. The disposable event had no guests, description or reminders.
 
-Validation in this conversation: all 62 tests passed, including Workers/D1/Durable Object coverage; typecheck, lint and production build passed. The final diagnostic-page change also passed its two relevant tests and all build checks. No additional runtime changes were made in this continuation, so those checks were not repeated for documentation edits.
+| Stage | Observed evidence |
+| --- | --- |
+| Plugin discovery | Refreshed existing plugin tools after the first discovery returned a cached empty catalog |
+| Signed verification and persistence | 10:49:38.446: `events/subscribe` accepted; request `edb1edd7add06eb0fd1a4452ba368da3`; one verified finite subscription in D1; ChatGPT saved one enabled monitoring task |
+| Google occurrence sync | The synthetic event was saved for 21:54–21:59 Sydney (+11:00). Manual Resync first seeded it at 10:51:57.604; Google's delayed push then synchronized and registered the identical alarm at 10:52:23.088 |
+| Provider audit linkage | Google `exists` notification message `191190561`, channel tag `3kn4YD7LVnZQ`; request `100c895cea4d4b460076c4ffcc2dc668`; occurrence tag `ZJW5YUsD0Eo-`, alarm/outbox tag `PbvzW4NYZwu0`, due `10:54:00` |
+| Durable wake and provider revalidation | 10:54:04.273: `due_work`, 4,273 ms lateness; request `7e279742e2836e83a0fbc1572d434266` |
+| Signed callback acknowledgement | 10:54:06.776: `calendar_delivery`, same event tag, subscription tag `tPm_619sTbhI`, attempt 1, HTTP 200, outcome `accepted` |
+| Persisted acknowledgement | D1 contained one accepted delivery, `attempts=1`, `last_status=200`, serialized body cleared; the linked receipt contained the synthetic occurrence |
+| Actual ChatGPT response | The existing [Load Calendar Tools chat](https://chatgpt.com/c/6ac5c069-cdb0-83ec-9629-8d07ce6db39b) reported the test title and 7 October at 9:54 pm Sydney time, with no calendar writes or other external actions |
+| Cleanup | ChatGPT task paused and preserved as a test record; D1 subscriptions and deliveries both empty after unsubscribe; synthetic Google event deleted through recoverable Calendar trash |
 
-## Live state
+The original and Google-push registrations used the same alarm identity; one delivery was recorded. This is live evidence of idempotent registration and successful real callback acceptance, not proof of exactly-once agent execution.
 
-- Site: `appgprj_6ac22de0956c8191a45d5b1bb86fd5e4`; published version 22.
-- URL: https://schedule-my-agents.bennycrow91.chatgpt.site
-- Environment revision 10: `MCP_EVENTS_READY=false`; `MCP_CALLBACK_PROBE` absent.
-- D1 read-only inspection: `subscriptions`, `subscription_attempts`, `deliveries` and `occurrence_outbox` each empty, with no further pages.
-- Site automations: zero.
-- Native fetch: valid HTTPS 200; invalid hostname/self-signed TLS 526; manual redirect 302; abort at 1000 ms; oversized body rejected by application limit. [Exact hosted evidence](native-fetch-checkpoint.md).
-- Real callback verification-only probe previously returned 200 and the exact challenge; it deliberately prevented subscription activation. [Probe record](sites-callback-support-repro.md).
+## Automated acceptance
 
-## Why the transport is still blocked
+All 65 tests pass, including actual Workers/D1/Durable Object integration and an independent Standard Webhooks receiver. Typecheck, lint and production build pass. Coverage includes exact-body signatures and required headers; distinct protocol/provider IDs; UTF-8 256 KiB payload rejection; immutable body/ID retries with fresh signing; concurrency and leases; transient failure/retry and runtime restart; crash/lost-ack exhaustion; 3xx/410/413 terminal handling; consent, owner, generation, subscription expiry and occurrence revision checks; and queued edit/cancel/disable/disconnect/unsubscribe races. Native adapter tests reject arbitrary hosts, URL tricks, non-public DNS answers and oversized bodies, retain manual redirects, cancel oversized responses and propagate timeouts.
 
-[MCP Events callback verification](https://developers.openai.com/plugins/build/mcp-events#verify-the-callback) requires public-address validation at connection time and connection to the validated address with the original hostname retained for TLS. The requirement applies to challenge verification and delivery.
+## Remaining transport limitation
 
-Raw sockets are denied for the real callback. Native fetch reaches it and the certificate fixtures fail as expected, but the public fixtures do not test changing DNS answers or prove public-IP checks at connection time. The application cannot install a custom pinned-IP connection through ordinary Worker fetch.
+[MCP Events callback verification](https://developers.openai.com/plugins/build/mcp-events#verify-the-callback) describes connection-time public-address validation and connection to the validated IP with original-hostname TLS verification. Native fetch does not expose app-controlled pinning, and these tests do not prove a Sites platform DNS-rebinding guarantee. This known limitation remains distinct from the now-observed functional delivery and ChatGPT response. General arbitrary-host native callbacks are deliberately unsupported. [Prior transport diagnostics](native-fetch-checkpoint.md) and [raw-socket failure evidence](sites-callback-support-repro.md) remain available.
 
-A new primary-source lead is worth retaining: Cloudflare's [MCP gatekeeper configuration](https://github.com/cloudflare/cloudflare-os/blob/main/packages/gatekeeper-mcp/cloudflare.config.ts) claims `global_fetch_strictly_public` rejects reserved address ranges after DNS resolution in production. Its [README](https://github.com/cloudflare/cloudflare-os/blob/main/packages/gatekeeper-mcp/README.md) makes the same claim. However, the [runtime flag documentation](https://developers.cloudflare.com/workers/configuration/compatibility-flags/#global-fetch-strictly-public) describes public-front-door routing for the Worker's own zone; [workerd source](https://github.com/cloudflare/workerd/blob/main/src/workerd/io/compatibility-date.capnp) explicitly separates Cloudflare production routing from the standalone workerd public-only default. This discrepancy does not establish which lower-level public-address checks Sites enforces. The Site build currently declares only `nodejs_compat`. No unverified flag-based security claim or transport fallback was introduced.
-
-## What permits further progress
-
-The next empirical test needs an owner-controlled DNS/HTTPS fixture, a valid certificate, deliberate answer changes and receiver/DNS connection logs. The current project has no such fixture or DNS control available. A fixed private-address failure alone could instead be a certificate or routing failure, so it would not establish rebinding protection. Do not probe shared Site internals or cloud metadata to manufacture this evidence.
-
-An authoritative Sites transport guarantee for connection-time public-address validation, or an available supported pinned-HTTPS capability, can resolve the capability question directly. A scoped controlled fixture permits the missing experiment; its results still need to be assessed against the required boundary. An external safe egress component remains a separate architecture decision requiring explicit authorization under the existing project constraints.
-
-After the transport boundary is resolved: wire the same approved transport into verification and delivery, complete a real Work Cloud subscription, schedule a disposable Google event, observe due delivery and persist the subscriber acknowledgement, verify recovery and audit linkage, then activate the production catalog and close #5 only after all acceptance evidence is present. An actual ChatGPT response belongs to the later demonstration check as well.
+Delivery uses bounded at-least-once attempts. A crash after remote acceptance but before local acknowledgement can repeat the same logical event; an accepted event cannot be recalled. Automatic Google watch renewal and missed-push convergence are separate remaining work.

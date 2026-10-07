@@ -45,4 +45,3 @@ After resolving connection-time destination validation, native fetch can be wire
 All 62 tests, typecheck, lint and the production build passed for the diagnostic API. After the final HTML page change, the two relevant diagnostic tests, typecheck, lint and production build passed again. The page is served directly by the Worker and uses the existing Site colors and typography.
 
 An intermediate app-router diagnostic page returned HTTP 200 locally but version 21 failed to deploy with the generic message AppGen deployment failed (deployment appgdep_6ac61b240c3c819186c06556cc425a7a). The supported tools exposed no detailed cause. The simplified Worker page in version 22 deployed successfully; the cause of the intermediate failure remains unknown.
-

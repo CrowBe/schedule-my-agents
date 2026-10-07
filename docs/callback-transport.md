@@ -38,3 +38,7 @@ The native-TLS assessment below is historical: a custom WASM implementation now 
 ## Evidence still required
 
 The local Workers lifecycle test uses a test-only echo receiver and independently verifies the HMAC. SQLite tests cover persistence, expiry, rotation, ownership, challenge failure and consent/unsubscribe races. The direct adapter additionally passes real TLS hostname/untrusted-root/corruption/expiry/redirect/oversized/stall checks, actual Workers WASM execution, IP policy tests and a public-network synthetic HTTPS POST. A hosted Site synthetic transport check subsequently completed HTTP 200. This does not prove real ChatGPT callback acceptance. Issue #4 stays open until a verified production transport and live lifecycle test exist. Issue #5 then wires durable delivery; #6 proves an actual chat response.
+
+## Owner-authorized native-fetch acceptance
+
+On 7 October the owner authorized proceeding to real MCP Events on their own Site/plugin. The exact-host native adapter completed a signed challenge, persisted a subscription, delivered a real due Google occurrence with HTTP 200 and recorded its acknowledgement. ChatGPT responded with the test title and start time. This supersedes the functional callback blocker above for the configured OpenAI-only mode, while connection-time pinning remains unverified. See [the complete live acceptance record](issue-5-acceptance.md).

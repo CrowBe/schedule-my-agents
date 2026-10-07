@@ -1,6 +1,6 @@
 # Schedule my agents
 
-Use Google Calendar as the scheduling interface for an agent through a publicly reachable ChatGPT Site with authenticated setup and owner-scoped calendar data. This prototype currently provides Google OAuth, calendar discovery, explicit consent, watch/sync code and an owner-scoped MCP calendar-list tool. Opaque durable start alarms and Google revalidation produce due work; subscriber delivery is planned.
+Use Google Calendar as the scheduling interface for an agent through a publicly reachable ChatGPT Site with authenticated setup and owner-scoped calendar data. This prototype currently provides Google OAuth, calendar discovery, explicit consent, watch/sync code and an owner-scoped MCP calendar-list tool. Opaque durable start alarms and Google revalidation produce due work; signed subscriber delivery uses a persisted outbox and the same durable alarms.
 
 Live OAuth/discovery, persisted consent, real watch creation and Google push create/edit/delete synchronization are verified. The user authorized public hosting to unblock Google ingress; setup and calendar data remain authenticated and owner scoped. See [VERIFICATION.md](VERIFICATION.md) for current evidence and [docs/private-ingress.md](docs/private-ingress.md) for issue #2.
 
@@ -31,14 +31,14 @@ Connect Google, enable a calendar, then start a watch once ingress is verified. 
 
 ## Read next
 
-- [ARCHITECTURE.md](ARCHITECTURE.md): implemented seams and planned delivery.
+- [ARCHITECTURE.md](ARCHITECTURE.md): implemented provider, timing and delivery boundaries.
 - [GLOSSARY.md](GLOSSARY.md): calendar and authorization vocabulary.
 - [AGENTS.md](AGENTS.md): contribution boundaries and completion checks.
 - [docs/brief.md](docs/brief.md): original product brief.
 
 Only timed occurrences within seven days are stored. Attendees, all-day events, cancellations and history are excluded. Google expands recurrence. Disabling deletes event contents and rejects late notifications before best-effort provider cleanup. A newly shared calendar stays disabled.
 
-`POST /mcp` provides discovery, tools and `enabled_calendars`. The event catalog remains empty. Subscription lifecycle code is persisted and tested, and the Site has a direct validated-IP Go TLS adapter. Real ChatGPT callback acceptance and durable delivery remain outstanding; see [the callback checkpoint](docs/callback-transport.md). Calendar permission never authorizes an agent to execute event text.
+`POST /mcp` provides discovery, tools and `enabled_calendars`. Event discovery requires `MCP_EVENTS_READY=true`, configured alarms, verified Google ingress and current calendar consent. Subscription verification and signed delivery share a callback transport. The default uses validated-IP Go TLS; `MCP_CALLBACK_TRANSPORT=native-openai` explicitly opts into an owner-authorized native-fetch experiment restricted to `connectors.api.openai.com`. Native hostname TLS and public DNS preflight remain enforced, but connection-time IP pinning is unverified. See [live acceptance evidence](docs/issue-5-acceptance.md) and [the callback checkpoint](docs/callback-transport.md). Calendar permission never authorizes an agent to execute event text.
 
 ## Cloudflare dispatcher
 
