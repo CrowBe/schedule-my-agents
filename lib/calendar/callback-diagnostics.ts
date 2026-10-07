@@ -7,6 +7,8 @@ export function callbackFailureCategory(error: unknown): string {
   if (message === 'unsafe_destination') return 'unsafe_destination';
   if (['invalid_dns_response', 'dns_query_failed', 'dns_response_too_large'].includes(message)) return message;
   if (/certificate|x509:/i.test(message)) return 'certificate';
+  if (/proxy request failed, cannot connect to the specified address/i.test(message)) return 'destination_disallowed';
+  if (/TCP Loop/i.test(message)) return 'tcp_loop';
   if (/proxy request failed|cannot connect|connection.*(?:failed|closed|refused)|TCP Loop/i.test(message)) return 'connection';
   if (/byte transport failed|EOF|reset by peer/i.test(message)) return 'stream';
   if (/tls:/i.test(message)) return 'tls';
