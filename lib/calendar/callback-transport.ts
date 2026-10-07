@@ -4,7 +4,7 @@ import '../../tls-client/wasm-exec.cjs';
 import module from '../../tls-client/tls.wasm';
 import roots from '../../tls-client/roots.pem?raw';
 import type { CallbackTransport } from './subscriptions.ts';
-import { validatedAddress } from './callback-policy.ts';
+import { publicAddress, validatedAddress } from './callback-policy.ts';
 import { callbackFailureCategory } from './callback-diagnostics.ts';
 
 declare global {
@@ -27,11 +27,13 @@ async function records(host:string,resolve:(host:string)=>Promise<string[]>){
 export const directCallbackTransport: CallbackTransport={
  async post(destination,body,headers,callerSignal){
   let stage = 'destination';
+  let addressCount: number | undefined, nonPublicCount: number | undefined;
   try {
   const signal=AbortSignal.any([callerSignal,AbortSignal.timeout(10_000)]),url=new URL(destination);
   if(url.protocol!=='https:'||url.port||url.username||url.password||url.hash)throw new Error('Invalid callback destination');
   stage = 'dns';
   const addresses=(await bounded(Promise.all([records(url.hostname,resolve4),records(url.hostname,resolve6)]),signal)).flat();
+  addressCount = addresses.length; nonPublicCount = addresses.filter(value => !publicAddress(value)).length;
   stage = 'address_policy';
   const address=validatedAddress(addresses); // All answers must be public; connect only to this literal IP.
   stage = 'tls_initialize';
@@ -56,7 +58,7 @@ export const directCallbackTransport: CallbackTransport={
    return new Response(status===204||status===205||status===304?null:new Uint8Array(data.slice(2)).buffer,{status});
   }finally{signal.removeEventListener('abort',close);close();}
   } catch (error) {
-   console.info('calendar_callback_transport', { stage, outcome: 'failed', category: callbackFailureCategory(error) });
+   console.info('calendar_callback_transport', { stage, outcome: 'failed', category: callbackFailureCategory(error), ...(stage === 'address_policy' ? { addressCount, nonPublicCount } : {}) });
    throw error;
   }
  }
