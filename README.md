@@ -1,8 +1,20 @@
 # Schedule my agents
 
-Use Google Calendar as the scheduling interface for an agent through a publicly reachable ChatGPT Site with authenticated setup and owner-scoped calendar data. This prototype currently provides Google OAuth, calendar discovery, explicit consent, watch/sync code and an owner-scoped MCP calendar-list tool. Opaque durable start alarms and Google revalidation produce due work; signed subscriber delivery uses a persisted outbox and the same durable alarms.
+Use Google Calendar as the scheduling interface for an agent through a publicly reachable ChatGPT Site with authenticated setup and owner-scoped calendar data. Google push synchronizes explicitly enabled calendars; opaque durable alarms revalidate occurrences at their start and a signed persisted outbox delivers `calendar.event.starting` to a subscribed ChatGPT Work Cloud chat.
 
 Live OAuth/discovery, persisted consent, real watch creation and Google push create/edit/delete synchronization are verified. The user authorized public hosting to unblock Google ingress; setup and calendar data remain authenticated and owner scoped. See [VERIFICATION.md](VERIFICATION.md) for current evidence and [docs/private-ingress.md](docs/private-ingress.md) for issue #2.
+
+## Run the bounded demo
+
+1. Open the Site, connect Google, explicitly enable one calendar and start its watch. The displayed watch expiry is the renewal deadline; renew manually before it. Use **Resync now** after a missed change, or renew an expired watch first.
+2. In a ChatGPT Work chat with Cloud selected, use the existing Schedule my agents plugin's `enabled_calendars` tool. Subscribe to `calendar.event.starting` with that exact enabled `calendarId`. Refresh the existing plugin tools if discovery is cached empty.
+3. Give the chat separate instructions, such as reporting the event's title/start and reviewing this repository's open PRs read-only. Calendar text itself supplies no permission to take actions. An event monitoring task is needed; no time-based ChatGPT schedule or polling task is needed.
+4. Create a normal timed Google event a few minutes ahead, allowing its change notification to synchronize before its start. Close setup. Verify both a persisted callback acknowledgement and the chat's actual response.
+5. Pause the monitoring task to unsubscribe and remove disposable events after testing. The Site grants subscriptions at most 24 hours and returns `refreshBefore`; ChatGPT's task interface may not expose a TTL.
+
+The live demo uses the explicitly authorized OpenAI-only native-fetch experiment. It works end to end, but connection-time IP pinning remains unproved, so full callback-transport acceptance remains open. See the [current acceptance matrix](docs/mvp-acceptance.md).
+
+Timing targets at most 60 seconds of lateness and rejects wakes over five minutes late. Discovery covers up to 366 days, ten pages and 500 candidates; only the next Google-expanded recurrence is registered. The setup snapshot contains seven days. All-day/cancelled events are excluded. Renewal and missed-push recovery are manual; unlimited unattended operation is outside this demo.
 
 ## Local development
 

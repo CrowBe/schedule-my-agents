@@ -88,6 +88,21 @@ test('persisted delivery retries keep bytes and identity; accepted receipt survi
   assert.equal(bodies.length,2); assert.equal(bodies[0],bodies[1]); assert.equal(ids[0],ids[1]); assert.notEqual(times[0],times[1]);
   const row=f.sql.prepare('SELECT * FROM deliveries').get()!; assert.equal(row.status,'accepted'); assert.equal(row.attempts,2); assert.equal(row.body,'');
 });
+test('native delivery records a 2xx receipt without reading an oversized or stalled success body', async () => {
+  for (const oversized of [false, true]) {
+    const f = await ready('https://connectors.api.openai.com/mcp/events/test');
+    let cancelled = false;
+    const transport = createNativeOpenAICallbackTransport({ resolve: async () => ['104.18.10.1'], fetcher: async () =>
+      new Response(new ReadableStream({ start(c) { if (oversized) c.enqueue(new Uint8Array(4097)); }, cancel() { cancelled = true; } }), { status: 200 }) });
+    f.response(transport.post);
+    await f.dispatch();
+    const row = f.sql.prepare('SELECT status, attempts, last_status, body FROM deliveries').get()!;
+    assert.deepEqual({ ...row }, { status: 'accepted', attempts: 1, last_status: 200, body: '' });
+    assert.equal(cancelled, true);
+    await f.dispatch();
+    assert.equal(f.sql.prepare('SELECT attempts FROM deliveries').get()!.attempts, 1);
+  }
+});
 test('concurrent dispatch has one lease; crash recovery retains logical identity and bounds attempts',async()=>{
   const f=await ready(); let calls=0, release!:()=>void;
   f.response(async()=>{calls++;await new Promise<void>(resolve=>release=resolve);return new Response(null,{status:204});});

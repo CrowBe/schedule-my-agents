@@ -107,7 +107,7 @@ export class Deliveries {
             let abort!: () => void;
             const timeout = new Promise<never>((_, reject) => { abort = () => reject(signal.reason); signal.addEventListener('abort', abort, { once: true }); });
             try {
-              const response = await Promise.race([this.transport.post(subscription.callback_url, delivery.body, headers, signal), timeout]);
+              const response = await Promise.race([this.transport.post(subscription.callback_url, delivery.body, headers, signal, 'status'), timeout]);
               status = response.status; outcome = response.redirected ? 'terminal' : deliveryOutcome(status);
               void response.body?.cancel().catch(() => {});
             } finally { signal.removeEventListener('abort', abort); }

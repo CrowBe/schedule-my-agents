@@ -12,7 +12,7 @@ export function createNativeOpenAICallbackTransport(options: {
 } = {}): CallbackTransport {
  const fetcher = options.fetcher ?? fetch;
  const resolve = options.resolve ?? resolveCallbackAddresses;
- return { async post(destination, body, headers, callerSignal) {
+ return { async post(destination, body, headers, callerSignal, responseMode = 'body') {
   const url = new URL(destination);
   if (url.protocol !== 'https:' || url.hostname !== 'connectors.api.openai.com' ||
       url.port || url.username || url.password || url.hash) throw new Error('unsupported_callback_destination');
@@ -23,14 +23,14 @@ export function createNativeOpenAICallbackTransport(options: {
   signal.throwIfAborted();
   const response = await fetcher(url.href, { method: 'POST', body, headers, signal, redirect: 'manual', credentials: 'omit' });
   if (response.redirected) { void response.body?.cancel().catch(() => {}); throw new Error('callback_redirected'); }
-  // A terminal status must survive an oversized or stalled error body.
+  // Receipt and terminal statuses must survive oversized or stalled bodies.
   // Only successful verification replies need their bounded challenge echo.
-  if (!response.ok) {
+  if (!response.ok || responseMode === 'status') {
    void response.body?.cancel().catch(() => {});
    return new Response(null, { status: response.status });
   }
-  // Verification echoes are small. Delivery needs only the status; bound and
-  // cancel every response so an endpoint cannot keep a lease open indefinitely.
+  // Verification needs a bounded challenge echo. Delivery discards the body
+  // as soon as headers acknowledge receipt, even if the body never finishes.
   const reader = response.body?.getReader();
   let text = '', size = 0;
   try {

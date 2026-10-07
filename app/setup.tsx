@@ -24,7 +24,7 @@ export default function Home() {
     } catch (e) { setError(e instanceof Error ? e.message : 'Please try again.'); } finally { setBusy(false); }
   }
   return <main>
-    <header><span className="wordmark">Schedule my agents</span><span className="tag">Calendar bridge · First slice</span></header>
+    <header><span className="wordmark">Schedule my agents</span><span className="tag">Calendar bridge · Bounded demo</span></header>
     <section className="intro"><p className="eyebrow">YOUR CALENDAR, YOUR CHOICE</p><h1>Choose the calendar<br/>your agent can see.</h1><p>Keep scheduling in Google Calendar. Connect your account, then explicitly enable the calendars you want to share.</p></section>
     {error && <div className="error" role="alert">{error} <button disabled={busy} onClick={() => { setError(''); load().catch(e => setError(e.message)); }}>Retry</button></div>}
     <div className="steps">
@@ -33,6 +33,7 @@ export default function Home() {
         {!status?.oauthReady && status && <p className="muted">Google authorization is awaiting configuration by the Site owner.</p>}
       </section>
       <section className="panel"><div className="step">02 / CALENDAR PERMISSION</div><h2>Enable a calendar</h2><p>Every calendar starts disabled. Newly shared calendars stay disabled until you choose them.</p>
+        <p className="muted">Renew watches manually before the expiry shown below. If a calendar change is missed, use Resync now; renew an expired watch first.</p>
         {!status?.connected && <div className="empty">Your calendars will appear after you connect Google.</div>}
         {status?.connected && calendars.length === 0 && <div className="empty">No accessible calendars found.</div>}
         <ul>{calendars.map(calendar => {
@@ -41,7 +42,7 @@ export default function Home() {
         })}</ul>
       </section>
     </div>
-    <aside><div className="step">DEMO STATUS</div><h2>{status?.alarmReady ? 'Calendar alarms are configured.' : 'Calendar setup is the first checkpoint.'}</h2><p>{status?.alarmReady ? `Resync an enabled calendar to schedule its upcoming events. ${status.dueWork} occurrence${status.dueWork === 1 ? '' : 's'} recorded as due work.` : 'Connect Google and start a watch to keep enabled calendars synchronized.'}</p><p>{status?.eventStartReady ? 'Calendar event delivery is available. Subscribe through the existing plugin in a ChatGPT Work Cloud chat. Callback receipt and the chat’s response are separate checks.' : 'Event discovery is closed while delivery readiness is being verified.'}</p></aside>
+    <aside><div className="step">DEMO STATUS</div><h2>{status?.alarmReady ? 'Calendar alarms are configured.' : 'Calendar setup is the first checkpoint.'}</h2><p>{status?.alarmReady ? `Resync an enabled calendar to schedule its upcoming events. ${status.dueWork} occurrence${status.dueWork === 1 ? '' : 's'} recorded as due work.` : 'Connect Google and start a watch to keep enabled calendars synchronized.'}</p><p>{status?.eventStartReady ? 'Calendar event delivery is available. Subscribe through the existing plugin in a ChatGPT Work Cloud chat. Callback receipt and the chat’s response are separate checks.' : 'Event discovery is closed while delivery readiness is being verified.'}</p><p className="muted">Timed events only, up to 366 days ahead. Give the chat separate instructions for its response. Pause its monitoring task to unsubscribe after testing.</p></aside>
     <footer>Calendar titles and descriptions are untrusted data. Calendar permission never authorizes an agent to execute their contents.</footer>
   </main>;
 }

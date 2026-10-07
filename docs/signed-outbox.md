@@ -1,4 +1,6 @@
-# Signed outbox slice checkpoint — 6 October 2026
+# Signed outbox
+
+Current functional and issue acceptance is recorded in [the MVP acceptance matrix](mvp-acceptance.md). The following table is the historical 6 October starting checkpoint, before PR #11 and live callback acceptance.
 
 Reviewed current open issues against `origin/main` at `de353e3` (merged PR #10).
 
@@ -18,7 +20,7 @@ The original durable alarm remains unacknowledged while work is pending. Its exi
 
 Every wake revalidates the actual Google occurrence. The immutable payload must still match the freshly fetched minimal payload; moved, cancelled or edited occurrences stop queued delivery. Current connection, calendar generation, subscriber filter, finite expiry, verification and subscription revision are checked before network dispatch. Disable/disconnect/unsubscribe delete queued content. Already accepted callbacks cannot be recalled. Google edits and local revocation cannot atomically cancel a network effect already underway.
 
-The protocol body is limited to 256 KiB UTF-8 and is never truncated. The validated-IP TLS adapter now exposes HTTP status to delivery so redirects, 410 and 413 stop retries. Verification still requires a successful challenge. Non-success response bodies are discarded. The adapter allows a separate bounded 8 KiB HTTP-header overhead; TLS chain, hostname, address, timeout and response bounds remain enforced. The checked-in WASM was rebuilt using the pinned Go 1.27.1 toolchain.
+The protocol body is limited to 256 KiB UTF-8 and is never truncated. Both transports expose HTTP status to delivery as soon as response headers arrive and discard its body, so an oversized or stalled body cannot hide an acknowledgement or terminal status. Redirects, 410 and 413 stop retries. Verification still reads a bounded successful challenge echo. The validated-IP adapter allows a separate bounded 8 KiB HTTP-header overhead; TLS chain, hostname, address and timeout bounds remain enforced. The checked-in WASM was rebuilt using the pinned Go 1.27.1 toolchain.
 
 Discovery requires `MCP_EVENTS_READY=true`, configured alarms, validated callback transport, verified Google ingress and a connected owner with an enabled calendar. The flag defaults false; enable it after applying migration 0005 and verifying the complete runtime path, then perform the real subscriber acceptance check before closing #5. Explicit test subscriptions remain possible while the catalog is closed.
 
