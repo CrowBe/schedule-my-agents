@@ -1,6 +1,6 @@
 import { directCallbackTransport } from '../lib/calendar/callback-transport';
 import { nativeVerificationProbe } from '../lib/calendar/callback-probe';
-import { nativeFetchDiagnosticResponse } from '../lib/calendar/native-fetch-diagnostics';
+import { nativeFetchDiagnosticResponse, nativeFetchDiagnosticPage } from '../lib/calendar/native-fetch-diagnostics';
 import { CalendarService } from "../lib/calendar/service";
 import handler from "vinext/server/fetch-handler";
 import { runWithConnectorBinding } from "../lib/connector-context";
@@ -9,6 +9,9 @@ import type { ConnectorBinding } from "../lib/connector-contract.mjs";
 export default {
   async fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext<{ CONNECTORS?: ConnectorBinding }>) {
     const path = new URL(request.url).pathname;
+    if (path === '/diagnostics/native-fetch') {
+      return nativeFetchDiagnosticPage(request);
+    }
     if (path === '/api/diagnostics/native-fetch') {
       return nativeFetchDiagnosticResponse(request);
     }

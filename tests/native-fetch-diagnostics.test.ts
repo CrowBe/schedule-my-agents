@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nativeFetchDiagnostics, nativeFetchDiagnosticResponse } from '../lib/calendar/native-fetch-diagnostics.ts';
+import { nativeFetchDiagnostics, nativeFetchDiagnosticResponse, nativeFetchDiagnosticPage } from '../lib/calendar/native-fetch-diagnostics.ts';
 
 test('fixed native-fetch diagnostics stop redirects, bound bodies and redact errors', async () => {
  const destinations: string[] = []; let cancelled = false;
@@ -32,5 +32,9 @@ test('native-fetch diagnostic rejects unauthenticated, parameterized and POST re
  const headers = { 'oai-authenticated-user-id': 'synthetic' };
  assert.equal((await nativeFetchDiagnosticResponse(new Request(url + '?destination=https://unexpected.example', { headers }), fetcher)).status, 400);
  assert.equal((await nativeFetchDiagnosticResponse(new Request(url, { method: 'POST', headers }), fetcher)).status, 400);
+ assert.equal(nativeFetchDiagnosticPage(new Request(url)).status, 401);
+ assert.equal(nativeFetchDiagnosticPage(new Request(url + '?destination=https://unexpected.example', { headers })).status, 400);
+ assert.equal(nativeFetchDiagnosticPage(new Request(url, { method: 'POST', headers })).status, 400);
+ assert.equal(nativeFetchDiagnosticPage(new Request(url, { headers })).headers.get('Content-Type'), 'text/html; charset=utf-8');
  assert.equal(calls, 0);
 });
