@@ -1,3 +1,9 @@
+# Current MVP acceptance — 8 October 2026
+
+The existing Work Cloud chat received a real Google event and performed the separately authorized read-only PR check. Actual Google push registered the occurrence; with setup closed, the durable wake was 2,699 ms late and the signed callback was accepted once with its D1 body cleared. A moved event's old alarm was rejected and its new start delivered 1,774 ms late; cancelled starts produced no delivery. Hosted manual watch renewal succeeded.
+
+All 70 tests, typecheck and lint pass for the success-body acknowledgement fix. Both callback transports now discard delivery bodies after status headers while retaining bounded signed challenge verification. The [current acceptance matrix](docs/mvp-acceptance.md) records source/deployment, timestamps, runtime recovery/race coverage, issue status, final deployment and cleanup. Full MVP acceptance remains open for the explicitly unproved native-fetch connection-time IP-pinning boundary. The following checkpoints are historical and their earlier blockers/test counts are superseded by the current matrix.
+
 # Real MCP Event delivery and ChatGPT response — 7 October 2026
 
 Site version 23, environment revision 11, uses the explicitly owner-authorized `native-openai` callback transport and enabled event catalog. A real signed challenge persisted one subscription. A disposable Google event synced through manual recovery and the subsequent real Google push registered the same opaque alarm. At 10:54:04.273 UTC the durable alarm produced due work (4,273 ms lateness); at 10:54:06.776 the first signed delivery returned HTTP 200 and D1 recorded acceptance with its body cleared. ChatGPT reported the test title and 21:54 Sydney start time in the original Work Cloud chat. The task was paused, subscription/delivery rows were removed, and the disposable calendar event was deleted.

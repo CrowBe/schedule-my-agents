@@ -4,23 +4,11 @@ The MVP is one demonstrated interaction: explicitly enable one Google Calendar, 
 
 The original scope is [brief.md](brief.md). The [MVP tracker](https://github.com/CrowBe/schedule-my-agents/issues/1) and [GitHub milestone](https://github.com/CrowBe/schedule-my-agents/milestone/1) group the remaining work.
 
-## Verified starting point
+## Current checkpoint
 
-At source commit `840e25ad17ec9ea4cce9559d5ecb19397b62aed5`, one private Site contains Google OAuth, encrypted refresh credentials, discovery, explicit calendar consent, the Google provider adapter, watch/webhook/sync routes, D1 migrations and the authenticated MCP endpoint. On 5 October 2026, the user completed OAuth and enabled Personal. Separate live DB inspection confirmed one connection and one enabled calendar, with no watch or event records yet.
+The real provider push, durable closed-setup timing, signed callback acceptance and useful read-only Work Cloud response were verified on 8 October 2026. The current suite has 70 tests, including actual Workers/D1/Durable Object restart and race coverage. Manual watch renewal is visible and was exercised on the hosted Site.
 
-Sixteen integration tests cover the implemented routes, including three in the actual Workers runtime. Hosted Google ingress returned HTTP 401 at the private boundary. Event-start timing, persisted MCP subscriptions, callback delivery and ChatGPT reaction remain unproven. See [VERIFICATION.md](../VERIFICATION.md) for the evidence and platform constraints.
-
-## Remaining slices
-
-| Slice | Reviewable outcome | Required integration predecessors |
-| --- | --- | --- |
-| [1. Live Google ingress and sync — #2](https://github.com/CrowBe/schedule-my-agents/issues/2) | An actual notification reaches the private Site and updates only the enabled calendar's canonical snapshot. | Shipped OAuth and consent |
-| [2. Durable occurrence timing — #3](https://github.com/CrowBe/schedule-my-agents/issues/3) | A persisted occurrence becomes due work with the browser closed, surviving restart and invalidating stale edits/cancellations. | #2; investigate the timer independently |
-| [3. Verified MCP subscriptions — #4](https://github.com/CrowBe/schedule-my-agents/issues/4) | Authorized subscriptions persist and complete signed destination verification through a proven safe transport. | Shipped consent; can proceed alongside #2/#3 |
-| [4. Signed due-event delivery — #5](https://github.com/CrowBe/schedule-my-agents/issues/5) | Due occurrences reach matching subscriptions through a persistent outbox with bounded retries and stable logical event IDs. | #2, #3, #4 |
-| [5. Real ChatGPT demo — #6](https://github.com/CrowBe/schedule-my-agents/issues/6) | An ordinary Google Calendar event wakes a subscribed Work Cloud chat and produces the instructed response. | #2, #3, #4, #5 |
-
-The issues contain their acceptance checks. Start with #2 to prove the single-Site ingress boundary. Timer and callback-transport capability investigations can proceed in parallel; do not advertise production event-start readiness until the complete delivery path works.
+[The acceptance matrix](mvp-acceptance.md) separates live evidence from fake-provider runtime tests and maps it to every issue. Google ingress (#2), durable timing (#3) and the functional signed outbox (#5) have acceptance evidence. The full tracker (#1), callback subscription slice (#4) and final acceptance gate (#6) remain open for connection-time validated-IP pinning on the hosted callback path. The owner-authorized OpenAI-only native-fetch experiment delivers real events but does not prove that stricter guarantee.
 
 ## MVP acceptance
 

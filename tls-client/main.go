@@ -60,7 +60,8 @@ func request(a []js.Value)([]byte,error) {
  // Delivery needs terminal HTTP statuses; legacy diagnostic callers still reject them.
  structured:=len(a)>6&&a[6].Bool()
  if !structured&&(resp.StatusCode<200||resp.StatusCode>=300){return nil,errors.New("non-success callback response")}
- if structured&&(resp.StatusCode<200||resp.StatusCode>=300){return []byte{byte(resp.StatusCode>>8),byte(resp.StatusCode)},nil}
+ statusOnly:=len(a)>7&&a[7].Bool()
+ if structured&&(statusOnly||resp.StatusCode<200||resp.StatusCode>=300){return []byte{byte(resp.StatusCode>>8),byte(resp.StatusCode)},nil}
  if resp.Header.Get("Content-Encoding")!=""&&resp.Header.Get("Content-Encoding")!="identity"{return nil,errors.New("unsupported response encoding")}
  data,err:=io.ReadAll(io.LimitReader(resp.Body,4097));if err!=nil{return nil,err};if len(data)>4096{return nil,errors.New("response too large")}
  if structured{return append([]byte{byte(resp.StatusCode>>8),byte(resp.StatusCode)},data...),nil}

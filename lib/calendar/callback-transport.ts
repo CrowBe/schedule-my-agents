@@ -10,7 +10,7 @@ import { openCallbackSocket } from './callback-socket.ts';
 
 declare global {
  var Go: new () => { importObject: WebAssembly.Imports; run(instance: WebAssembly.Instance): Promise<void> };
- var siteTLSRequest: (host:string, roots:string, read:()=>Promise<Uint8Array|null>, write:(value:Uint8Array)=>Promise<void>, close:()=>void, request:Uint8Array, includeStatus?:boolean)=>Promise<Uint8Array>;
+ var siteTLSRequest: (host:string, roots:string, read:()=>Promise<Uint8Array|null>, write:(value:Uint8Array)=>Promise<void>, close:()=>void, request:Uint8Array, includeStatus?:boolean, statusOnly?:boolean)=>Promise<Uint8Array>;
 }
 let ready: Promise<void> | undefined;
 async function initialize(){
@@ -23,7 +23,7 @@ async function bounded<T>(work:Promise<T>,signal:AbortSignal):Promise<T>{
  try{return await Promise.race([work,stopped]);}finally{signal.removeEventListener('abort',abort);}
 }
 export const directCallbackTransport: CallbackTransport={
- async post(destination,body,headers,callerSignal){
+ async post(destination,body,headers,callerSignal,responseMode = 'body'){
   let stage = 'destination';
   let addressCount: number | undefined, nonPublicCount: number | undefined;
   try {
@@ -50,7 +50,7 @@ export const directCallbackTransport: CallbackTransport={
    signal.throwIfAborted();
    const reader=socket.readable.getReader(),writer=socket.writable.getWriter();
    stage = 'tls_http';
-   const data=await bounded(siteTLSRequest(url.hostname,roots,async()=>{const v=await reader.read();return v.done?null:v.value;},value=>writer.write(value),close,bytes,true),signal);
+   const data=await bounded(siteTLSRequest(url.hostname,roots,async()=>{const v=await reader.read();return v.done?null:v.value;},value=>writer.write(value),close,bytes,true,responseMode === 'status'),signal);
    const status=data[0]*256+data[1];
    return new Response(status===204||status===205||status===304?null:new Uint8Array(data.slice(2)).buffer,{status});
   }finally{signal.removeEventListener('abort',close);close();}
