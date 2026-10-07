@@ -41,3 +41,15 @@ test('native transport leaves redirects unaccepted, cancels oversized replies an
  assert.equal(cancelled, true);
  await assert.rejects(make(async (_url, init) => new Promise<Response>((_resolve, reject) => init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), { once: true }))).post(destination, '{}', {}, signal()), { name: 'TimeoutError' });
 });
+
+test('native transport preserves non-success status without consuming an oversized or stalled body', async () => {
+ for (const status of [302, 410, 413, 503]) {
+  let cancelled = false;
+  const transport = createNativeOpenAICallbackTransport({ resolve: async () => ['104.18.10.1'], fetcher: async () =>
+   new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array(4097)); }, cancel() { cancelled = true; } }), { status }) });
+  const response = await transport.post(destination, '{}', {}, signal());
+  assert.equal(response.status, status);
+  assert.equal(response.body, null);
+  assert.equal(cancelled, true);
+ }
+});

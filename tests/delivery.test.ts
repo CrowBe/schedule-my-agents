@@ -42,6 +42,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { Subscriptions, signedHeaders, type CallbackTransport } from '../lib/calendar/subscriptions.ts';
 import { Store } from '../lib/calendar/store.ts';
 import { Deliveries } from '../lib/calendar/delivery.ts';
+import { createNativeOpenAICallbackTransport } from '../lib/calendar/native-callback-transport.ts';
 import type { Environment, Statement } from '../lib/calendar/types.ts';
 function fixture() {
   const sql = new DatabaseSync(':memory:');
@@ -68,8 +69,9 @@ function fixture() {
   const params={name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example.com:443/callback',secret:'whsec_'+btoa('s'.repeat(32))},ttlMs:600_000};
   return {sql,env,store,service,params, setNow:(v:number)=>now=v, now:()=>now,calls:()=>calls,setRespond:(r:CallbackTransport['post'])=>respond=r};
 }
-async function ready() {
+async function ready(callbackUrl?: string) {
   const f = fixture();
+  if (callbackUrl) f.params.delivery.url = callbackUrl;
   const sub = await f.service().subscribe('alice', f.params);
   const event = {...occurrence, start:new Date(f.now()).toISOString()};
   await f.store.claimDue('logical','alice','personal','g1',event,f.now(),f.now(),f.now()+300_000);
@@ -130,4 +132,65 @@ test('lost receiver acknowledgement retries the same logical event; audience sta
   await f.service().subscribe('alice',{...f.params,delivery:{...f.params.delivery,url:'https://another.example/callback'}});
   f.setNow(f.now()+2000);await f.dispatch();assert.deepEqual(receipts,['evt_logical','evt_logical']);
   assert.equal(f.sql.prepare('SELECT count(*) n FROM deliveries').get()!.n,1);
+});
+
+test('native terminal responses with oversized bodies persist a terminal delivery without retries', async () => {
+  for (const status of [302, 410, 413]) {
+    const f = await ready('https://connectors.api.openai.com/mcp/events/test');
+    let calls = 0;
+    const transport = createNativeOpenAICallbackTransport({ resolve: async () => ['104.18.10.1'], fetcher: async () => {
+      calls++; return new Response('x'.repeat(4097), { status });
+    } });
+    f.response(transport.post);
+    await f.dispatch(); await f.dispatch();
+    assert.equal(calls, 1);
+    const row = f.sql.prepare('SELECT status, last_status, body FROM deliveries').get()!;
+    assert.equal(row.status, 'terminal'); assert.equal(row.last_status, status); assert.equal(row.body, '');
+  }
+});
+
+test('slow authority checks bound the send to the remaining lease and recover on retry', async () => {
+  const f = await ready(), claimedAt = f.now();
+  const first = f.store.first.bind(f.store);
+  let delayed = false, calls = 0, stopped = false;
+  f.store.first = async <T>(query: string, ...values: unknown[]) => {
+    const row = await first<T>(query, ...values);
+    if (!delayed && query.startsWith('SELECT s.* FROM subscriptions')) {
+      delayed = true; f.setNow(claimedAt + 13_800);
+    }
+    return row;
+  };
+  f.response(async (_url, _body, _headers, signal) => {
+    calls++;
+    signal.addEventListener('abort', () => { stopped = true; }, { once: true });
+    await new Promise(resolve => setTimeout(resolve, 300));
+    return new Response(null, { status: 204 });
+  });
+  await assert.rejects(f.dispatch(), /pending durable retry/);
+  assert.equal(stopped, true);
+  assert.equal(f.sql.prepare('SELECT status FROM deliveries').get()!.status, 'pending');
+  f.setNow(claimedAt + 17_000);
+  f.response(async () => { calls++; return new Response(null, { status: 204 }); });
+  await f.dispatch();
+  assert.equal(calls, 2);
+  assert.equal(f.sql.prepare('SELECT status FROM deliveries').get()!.status, 'accepted');
+});
+
+test('authority checks consuming the lease defer dispatch without dropping the event', async () => {
+  const f = await ready(), claimedAt = f.now();
+  const first = f.store.first.bind(f.store);
+  let delayed = false, calls = 0;
+  f.store.first = async <T>(query: string, ...values: unknown[]) => {
+    const row = await first<T>(query, ...values);
+    if (!delayed && query.startsWith('SELECT s.* FROM subscriptions')) {
+      delayed = true; f.setNow(claimedAt + 15_001);
+    }
+    return row;
+  };
+  f.response(async () => { calls++; return new Response(null, { status: 204 }); });
+  await assert.rejects(f.dispatch(), /pending durable retry/);
+  assert.equal(calls, 0);
+  f.setNow(f.now() + 2000); await f.dispatch();
+  assert.equal(calls, 1);
+  assert.equal(f.sql.prepare('SELECT status FROM deliveries').get()!.status, 'accepted');
 });

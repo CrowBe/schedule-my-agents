@@ -98,8 +98,12 @@ export class Deliveries {
           // Recheck after asynchronous crypto and immediately before the network effect.
           const active = await subscriptions.active(subscription.id, receipt.owner);
           const owned = await this.store.first<{lease: string}>("SELECT lease FROM deliveries WHERE outbox_id = ? AND subscription_id = ? AND lease = ? AND status = 'pending'", id, subscription.id, lease);
-          if (active?.revision === subscription.revision && owned && this.now() <= receipt.expires_at && this.now() < now + 15_000) {
-            const signal = AbortSignal.timeout(10_000);
+          if (active?.revision === subscription.revision && owned) {
+            // Preparation consumes the lease too. Stop the network effect before
+            // another worker can reclaim it, leaving a second for cancellation.
+            const budget = Math.min(10_000, now + 14_000 - this.now(), receipt.expires_at - this.now());
+            if (budget <= 0) throw new Error('Delivery preparation consumed the send budget.');
+            const signal = AbortSignal.timeout(budget);
             let abort!: () => void;
             const timeout = new Promise<never>((_, reject) => { abort = () => reject(signal.reason); signal.addEventListener('abort', abort, { once: true }); });
             try {

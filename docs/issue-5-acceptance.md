@@ -1,6 +1,6 @@
 # Issue #5 live acceptance — 7 October 2026
 
-Functional delivery acceptance is verified on the owner's real Site/plugin using the explicitly authorized OpenAI-only native-fetch mode. Code review remains pending. The broader connection-time IP-pinning guarantee is unverified and is not claimed by this experiment.
+Functional delivery acceptance was verified on the owner's real Site/plugin using the explicitly authorized OpenAI-only native-fetch mode. The broader connection-time IP-pinning guarantee is unverified and is not claimed by this experiment.
 
 ## Configuration and scope
 
@@ -35,3 +35,9 @@ All 65 tests pass, including actual Workers/D1/Durable Object integration and an
 [MCP Events callback verification](https://developers.openai.com/plugins/build/mcp-events#verify-the-callback) describes connection-time public-address validation and connection to the validated IP with original-hostname TLS verification. Native fetch does not expose app-controlled pinning, and these tests do not prove a Sites platform DNS-rebinding guarantee. This known limitation remains distinct from the now-observed functional delivery and ChatGPT response. General arbitrary-host native callbacks are deliberately unsupported. [Prior transport diagnostics](native-fetch-checkpoint.md) and [raw-socket failure evidence](sites-callback-support-repro.md) remain available.
 
 Delivery uses bounded at-least-once attempts. A crash after remote acceptance but before local acknowledgement can repeat the same logical event; an accepted event cannot be recalled. Automatic Google watch renewal and missed-push convergence are separate remaining work.
+
+## Review follow-up — 8 October 2026
+
+Standards and issue-acceptance review found and corrected two recovery defects: oversized or stalled error bodies could hide terminal callback statuses, and slow authority checks could leave insufficient lease time for a full network request. Non-success bodies are now cancelled without reading them; dispatch uses the remaining lease and occurrence lifetime, with a one-second lease cancellation margin. Preparation that consumes the budget defers delivery to a bounded retry.
+
+Four added regressions failed before these fixes and pass afterward. This follow-up verifies local transport and persisted delivery behavior; the hosted acceptance timeline above records the earlier deployed source.

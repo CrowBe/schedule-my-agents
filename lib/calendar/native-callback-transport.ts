@@ -23,6 +23,12 @@ export function createNativeOpenAICallbackTransport(options: {
   signal.throwIfAborted();
   const response = await fetcher(url.href, { method: 'POST', body, headers, signal, redirect: 'manual', credentials: 'omit' });
   if (response.redirected) { void response.body?.cancel().catch(() => {}); throw new Error('callback_redirected'); }
+  // A terminal status must survive an oversized or stalled error body.
+  // Only successful verification replies need their bounded challenge echo.
+  if (!response.ok) {
+   void response.body?.cancel().catch(() => {});
+   return new Response(null, { status: response.status });
+  }
   // Verification echoes are small. Delivery needs only the status; bound and
   // cancel every response so an endpoint cannot keep a lease open indefinitely.
   const reader = response.body?.getReader();
