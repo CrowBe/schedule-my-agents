@@ -1,11 +1,11 @@
 import { connect } from 'cloudflare:sockets';
-import { resolve4, resolve6 } from 'node:dns/promises';
 import '../../tls-client/wasm-exec.cjs';
 import module from '../../tls-client/tls.wasm';
 import roots from '../../tls-client/roots.pem?raw';
 import type { CallbackTransport } from './subscriptions.ts';
 import { publicAddress, validatedAddress } from './callback-policy.ts';
 import { callbackFailureCategory } from './callback-diagnostics.ts';
+import { resolveCallbackAddresses } from './callback-dns.ts';
 
 declare global {
  var Go: new () => { importObject: WebAssembly.Imports; run(instance: WebAssembly.Instance): Promise<void> };
@@ -21,9 +21,6 @@ async function bounded<T>(work:Promise<T>,signal:AbortSignal):Promise<T>{
  const stopped=new Promise<never>((_,reject)=>{abort=()=>reject(signal.reason);signal.addEventListener('abort',abort,{once:true});});
  try{return await Promise.race([work,stopped]);}finally{signal.removeEventListener('abort',abort);}
 }
-async function records(host:string,resolve:(host:string)=>Promise<string[]>){
- try{return await resolve(host);}catch(e){if(['ENODATA','ENOTFOUND'].includes((e as {code?:string}).code??''))return [];throw e;}
-}
 export const directCallbackTransport: CallbackTransport={
  async post(destination,body,headers,callerSignal){
   let stage = 'destination';
@@ -32,7 +29,7 @@ export const directCallbackTransport: CallbackTransport={
   const signal=AbortSignal.any([callerSignal,AbortSignal.timeout(10_000)]),url=new URL(destination);
   if(url.protocol!=='https:'||url.port||url.username||url.password||url.hash)throw new Error('Invalid callback destination');
   stage = 'dns';
-  const addresses=(await bounded(Promise.all([records(url.hostname,resolve4),records(url.hostname,resolve6)]),signal)).flat();
+  const addresses=await bounded(resolveCallbackAddresses(url.hostname,signal),signal);
   addressCount = addresses.length; nonPublicCount = addresses.filter(value => !publicAddress(value)).length;
   stage = 'address_policy';
   const address=validatedAddress(addresses); // All answers must be public; connect only to this literal IP.
