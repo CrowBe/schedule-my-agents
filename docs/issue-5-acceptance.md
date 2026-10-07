@@ -1,6 +1,10 @@
 # Issue #5 acceptance checkpoint — 7 October 2026
 
-Status: blocked on the callback connection boundary, not complete.
+Status: owner-authorized native-fetch live acceptance test in progress, not complete.
+
+The owner explicitly authorized proceeding to real MCP Events on their own Site/plugin rather than blocking that experiment on a platform DNS guarantee. `MCP_CALLBACK_TRANSPORT=native-openai` opts into native HTTPS only for `connectors.api.openai.com`. Both challenge and delivery use this transport, retain public DNS preflight, hostname TLS, manual redirects, signing, resource bounds and current owner/calendar authority. Native fetch's connection-time public-IP validation remains unverified; successful delivery will establish functional acceptance, not that broader guarantee. The general pinned transport remains the default.
+
+The following 10:28 UTC evidence is the checkpoint before that instruction; live test results will be recorded below.
 
 Reviewed the complete [Issue #5](https://github.com/CrowBe/schedule-my-agents/issues/5), current implementation, tests and live Site at 10:28 UTC. No runtime code, catalog readiness, audience, calendar data or infrastructure was changed during this continuation. The original issue-5 checkout remains separate from this diagnostic branch.
 

@@ -28,6 +28,6 @@
 
 **Subscription**: An owner- and consent-generation-scoped, finite permission to notify a verified callback about one enabled calendar. It grants no authority to execute calendar text.
 
-**Callback transport**: The connection boundary that validates public destination addresses, pins the connection and retains hostname TLS verification. It must be shared by verification and event delivery.
+**Callback transport**: The shared connection boundary for verification and event delivery. The default validates public destination addresses, pins the connection and retains hostname TLS verification. The explicitly enabled OpenAI-only native-fetch experiment retains hostname TLS and public DNS preflight but does not establish connection-time pinning.
 
 **Delivery attempt**: A leased network attempt for one frozen subscriber and logical event. Its immutable body survives retries; an accepted receipt does not prove agent execution.

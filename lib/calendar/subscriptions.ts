@@ -2,9 +2,9 @@ import { base64, digest, open, random, seal, unbase64 } from './crypto.ts';
 import { Store } from './store.ts';
 import type { Environment } from './types.ts';
 
-// An implementation must resolve on EVERY connection, reject all non-public IPs,
-// connect to that validated IP with original-hostname TLS verification, and never
-// follow redirects. Ordinary fetch is intentionally not a production default.
+// The general callback contract requires public-IP pinning with hostname TLS.
+// The default implements it; an explicitly enabled OpenAI-only native-fetch
+// experiment tests delivery without claiming that connection-time guarantee.
 export interface CallbackTransport { post(url: string, body: string, headers: Record<string, string>, signal: AbortSignal): Promise<Response> }
 export class SubscriptionError extends Error {
   constructor(public code: number, message: string, public reason?: string) { super(message); }

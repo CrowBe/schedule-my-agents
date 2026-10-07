@@ -7,7 +7,7 @@ export interface Statement {
 export interface Database { prepare(sql: string): Statement; batch(statements: Statement[]): Promise<unknown> }
 export interface Environment {
   DB?: Database;
-  // Enable discovery only after deployment migration and hosted delivery verification.
+  // Explicitly enable discovery after migration, including an authorized live test.
   MCP_EVENTS_READY?: string;
   SITE_ORIGIN?: string;
   GOOGLE_CLIENT_ID?: string;
