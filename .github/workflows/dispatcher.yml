@@ -1,9 +1,9 @@
 name: Cloudflare dispatcher
 on:
   push:
-    paths: ['dispatcher/**', 'shared/alarm.ts', '.github/workflows/dispatcher.yml']
+    paths: ['dispatcher/**', 'shared/**', 'lib/calendar/callback-*.ts', 'package.json', 'package-lock.json', '.github/workflows/dispatcher.yml']
   pull_request:
-    paths: ['dispatcher/**', 'shared/alarm.ts', '.github/workflows/dispatcher.yml']
+    paths: ['dispatcher/**', 'shared/**', 'lib/calendar/callback-*.ts', 'package.json', 'package-lock.json', '.github/workflows/dispatcher.yml']
   workflow_dispatch:
     inputs:
       deploy:
@@ -24,7 +24,13 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: dispatcher/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            dispatcher/package-lock.json
+      # The fixed diagnostic reuses the canonical address policy and socket
+      # helpers. Their locked dependency resolves from the repository root.
+      - run: npm ci
+        working-directory: .
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
