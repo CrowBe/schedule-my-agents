@@ -52,6 +52,7 @@ export class CalendarService {
           webhookVerified: this.env.GOOGLE_WEBHOOK_VERIFIED === 'true', eventStartReady: this.eventCatalogReady, alarmReady: this.alarms.configured,
           dueWork: (await this.store.first<{count: number}>('SELECT count(*) AS count FROM occurrence_outbox WHERE owner = ? AND status = \'pending\'', owner))?.count ?? 0,
           enabled: await this.store.all('SELECT calendar_id, summary FROM calendars WHERE owner = ? AND enabled = 1', owner),
+          subscriptions: await this.store.all('SELECT calendar_id, count(*) AS count FROM subscriptions WHERE owner = ? AND expires_at > ? GROUP BY calendar_id', owner, this.now()),
           watches: await this.store.all('SELECT calendar_id, status, expiration, synced_at, sync_failed FROM watches WHERE owner = ? AND status != \'revoked\'', owner) });
       }
       if (path === '/api/google/connect' && request.method === 'POST') {
@@ -113,6 +114,11 @@ export class CalendarService {
       }
       if (path === '/api/calendars/watch' && request.method === 'POST') {
         this.mutation(request); return await this.watch(owner, await this.calendarId(request));
+      }
+      if (path === '/api/calendars/unsubscribe' && request.method === 'POST') {
+        this.mutation(request);
+        await this.store.revokeSubscriptions(owner, await this.calendarId(request));
+        return json({ subscriptions: 0 });
       }
       throw new AppError(404, 'Route not found.');
     } catch (error) {

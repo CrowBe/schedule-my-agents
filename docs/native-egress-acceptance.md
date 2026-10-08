@@ -14,4 +14,23 @@ Explicit destination/network prohibition errors are recorded separately from gen
 
 ## Evidence
 
-Pending hosted execution. Keep issue #4's stricter connection-time/rebinding acceptance open until equivalent platform enforcement is established. Record deployment/source, observed results, real callback receipt and remaining uncertainty here after testing.
+Site version **29**, source `f2b23cb89e6b0862d69f50b81d28f18ef1efc856`, deployed successfully at **09:10:17.844 UTC** on 8 October, environment revision 11. Deployment `appgdep_6ac75deb11d481919255e8e2b080c577` retained the existing audience, plugin and native callback configuration. The generated Worker configuration includes the requested public-front-door compatibility flag; publication is not a runtime policy attestation.
+
+The authenticated browser completed the fixed probe set at **09:11:10.807 UTC**, request `ac97ec440f4b2a194bbafdcd0860792b`:
+
+| Fixture | Observed HTTP status | Time |
+| --- | --- | --- |
+| Public HTTPS control | 200 | 5 ms |
+| IPv4 loopback, private, link-local and documentation literals | 403 each | 1 ms each |
+| IPv6 loopback | 403 | 1 ms |
+| IPv6 private and mapped loopback | 403 each | 2 ms each |
+| Static DNS hostname resolving to loopback | 403 | 1,111 ms |
+| Public redirect to loopback | 302, not followed | 846 ms |
+
+All response contents were discarded. The report correctly records the 403s as HTTP responses rather than explicit runtime policy errors. Their fast, consistent rejection is evidence of native destination filtering, but the test does not identify the actual socket address, change DNS between validation and connection, or attest the full non-public range/fallback policy. `dnsRebindingTested` and `callbackContractVerified` remain false.
+
+The preserved **Load Calendar Tools** test task was resumed exactly once with acknowledgement-only instructions. One fresh signed challenge verified a subscription. A disposable real Google event starting at **09:16 UTC / 20:16 Sydney** produced one accepted delivery at **09:16:01.852 UTC**, event tag `sX2eAIWhbN3W`, subscription tag `UA_GGKBU9qAB`, HTTP 200, attempt 1. Live D1 confirmed `status=accepted`, `attempts=1`, `last_status=200`, with the body cleared and lease released. The original chat then acknowledged the synthetic title and 20:16 start before the separate cleanup message. This is actual Google-to-ChatGPT delivery evidence, not a fake callback receiver.
+
+The synthetic event was removed and the chat verified its saved task was paused. A subsequent D1 read still found its subscription: the task service rejected removal of its event trigger, so pausing alone did not establish unsubscribe in this run. An authenticated, same-origin owner control now revokes a selected calendar's subscriptions, queued deliveries and pending verification attempts atomically without removing its calendar grant or watch. Automated Workers/D1 coverage verifies owner isolation, origin/authentication enforcement, idempotence and retained grants. Hosted cleanup with that control is recorded below after publication.
+
+All **76 tests**, typecheck, lint and production build pass. Callback regressions cover stalled DNS/fetch/challenge reads and credential-bearing, injected or oversized headers. Keep issue #4's stricter connection-time/rebinding acceptance open until equivalent hosted platform enforcement is established; issues #1 and #6 retain that dependency. No paid relay is needed for the demonstrated functional path.

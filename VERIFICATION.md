@@ -1,3 +1,9 @@
+# Sites-native callback hardening — 8 October 2026
+
+The exact-host native path passed a fresh signed challenge and delivered a real Google occurrence to the original Work Cloud chat at 20:16 Sydney, accepted once with HTTP 200. All eight fixed non-public literal/DNS fixtures returned 403; a public control returned 200 and the redirect remained an unfollowed 302. These observations support native destination filtering without attesting DNS rebinding or the full connection-time policy. No additional host or paid plan was provisioned.
+
+All 76 tests and build checks pass. Native requests now bound headers and the entire DNS/fetch/challenge deadline. Owner-scoped setup controls can revoke event subscriptions independently of calendar consent; task pausing alone left a subscription active during this retest. See [current Site-native evidence and cleanup](docs/native-egress-acceptance.md). Full transport acceptance remains open in #4, with #1/#6 dependent on it. The following checkpoints preserve earlier live evidence.
+
 # Current MVP acceptance — 8 October 2026
 
 The existing Work Cloud chat received a real Google event and performed the separately authorized read-only PR check. Actual Google push registered the occurrence; with setup closed, the durable wake was 2,699 ms late and the signed callback was accepted once with its D1 body cleared. A moved event's old alarm was rejected and its new start delivered 1,774 ms late; cancelled starts produced no delivery. Hosted manual watch renewal succeeded.

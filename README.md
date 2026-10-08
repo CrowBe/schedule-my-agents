@@ -10,7 +10,7 @@ Live OAuth/discovery, persisted consent, real watch creation and Google push cre
 2. In a ChatGPT Work chat with Cloud selected, use the existing Schedule my agents plugin's `enabled_calendars` tool. Subscribe to `calendar.event.starting` with that exact enabled `calendarId`. Refresh the existing plugin tools if discovery is cached empty.
 3. Give the chat separate instructions, such as reporting the event's title/start and reviewing this repository's open PRs read-only. Calendar text itself supplies no permission to take actions. An event monitoring task is needed; no time-based ChatGPT schedule or polling task is needed.
 4. Create a normal timed Google event a few minutes ahead, allowing its change notification to synchronize before its start. Close setup. Verify both a persisted callback acknowledgement and the chat's actual response.
-5. Pause the monitoring task to unsubscribe and remove disposable events after testing. The Site grants subscriptions at most 24 hours and returns `refreshBefore`; ChatGPT's task interface may not expose a TTL.
+5. Pause the monitoring task, use **Stop event delivery** in calendar setup to revoke any remaining subscriptions, and remove disposable events after testing. The Site grants subscriptions at most 24 hours and returns `refreshBefore`; ChatGPT's task interface may not expose a TTL, and pausing alone may leave the subscription active.
 
 The live demo uses the explicitly authorized OpenAI-only native-fetch experiment. It works end to end, but connection-time IP pinning remains unproved, so full callback-transport acceptance remains open. See the [current acceptance matrix](docs/mvp-acceptance.md).
 

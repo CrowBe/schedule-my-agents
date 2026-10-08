@@ -15,6 +15,13 @@ export class Store {
     if (!row?.enabled || (generation && row.generation !== generation)) throw new AppError(403, 'This calendar is not enabled.');
     return row;
   }
+  async revokeSubscriptions(owner: string, calendarId: string) {
+    await this.db!.batch([
+      this.statement('DELETE FROM deliveries WHERE owner = ? AND calendar_id = ?', owner, calendarId),
+      this.statement('DELETE FROM subscriptions WHERE owner = ? AND calendar_id = ?', owner, calendarId),
+      this.statement('DELETE FROM subscription_attempts WHERE owner = ? AND calendar_id = ?', owner, calendarId),
+    ]);
+  }
   async disconnect(owner: string) {
     await this.db!.batch([
       this.statement('DELETE FROM deliveries WHERE owner = ?', owner),
