@@ -2,7 +2,9 @@ import { directCallbackTransport } from '../lib/calendar/callback-transport';
 import { nativeVerificationProbe } from '../lib/calendar/callback-probe';
 import { nativeOpenAICallbackTransport } from '../lib/calendar/native-callback-transport';
 import { nativeFetchDiagnosticResponse, nativeFetchDiagnosticPage } from '../lib/calendar/native-fetch-diagnostics';
-import { nativeEgressDiagnosticResponse } from '../lib/calendar/native-egress-diagnostics';
+import { authenticatedDiagnosticResponse, nativeEgressDiagnosticResponse } from '../lib/calendar/native-egress-diagnostics';
+import { nativeConnectionDiagnostics, nativeRebindingDiagnostics } from '../lib/calendar/native-connection-diagnostics';
+import { timerSocketDiagnostics } from '../lib/calendar/timer-socket-diagnostics';
 import { CalendarService } from "../lib/calendar/service";
 import handler from "vinext/server/fetch-handler";
 import { runWithConnectorBinding } from "../lib/connector-context";
@@ -11,17 +13,28 @@ import type { ConnectorBinding } from "../lib/connector-contract.mjs";
 export default {
   async fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext<{ CONNECTORS?: ConnectorBinding }>) {
     const path = new URL(request.url).pathname;
+    if (path === '/diagnostics/timer-socket') return nativeFetchDiagnosticPage(request, 'timer-socket');
+    if (path === '/api/diagnostics/timer-socket') return authenticatedDiagnosticResponse(request,
+      (env as unknown as { SITE_ORIGIN?: string }).SITE_ORIGIN, () => timerSocketDiagnostics(env, request.signal), 'calendar_timer_socket_diagnostics');
     if (path === '/diagnostics/native-fetch') {
       return nativeFetchDiagnosticPage(request);
     }
     if (path === '/diagnostics/native-egress') {
       return nativeFetchDiagnosticPage(request, 'native-egress');
     }
+    if (path === '/diagnostics/native-connection' || path === '/diagnostics/native-rebinding') {
+      return nativeFetchDiagnosticPage(request, path === '/diagnostics/native-connection' ? 'native-connection' : 'native-rebinding');
+    }
     if (path === '/api/diagnostics/native-fetch') {
       return nativeFetchDiagnosticResponse(request);
     }
     if (path === '/api/diagnostics/native-egress') {
       return nativeEgressDiagnosticResponse(request, (env as unknown as { SITE_ORIGIN?: string }).SITE_ORIGIN);
+    }
+    if (path === '/api/diagnostics/native-connection' || path === '/api/diagnostics/native-rebinding') {
+      const run = path === '/api/diagnostics/native-connection' ? nativeConnectionDiagnostics : nativeRebindingDiagnostics;
+      return authenticatedDiagnosticResponse(request, (env as unknown as { SITE_ORIGIN?: string }).SITE_ORIGIN,
+        () => run(request.signal), path === '/api/diagnostics/native-connection' ? 'calendar_native_connection_diagnostics' : 'calendar_native_rebinding_diagnostics');
     }
     // Fixed synthetic diagnostic; never accepts a destination, headers or private payload.
     if (path === '/api/diagnostics/tls' && request.method === 'GET') {

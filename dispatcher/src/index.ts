@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { boundedBody, CALLBACK_PATH, MAX_HORIZON, parseJob, signedHeaders, verified, type AlarmJob } from '../../shared/alarm.ts';
+import { SOCKET_DIAGNOSTIC_PATH, socketDiagnosticResponse } from './socket-diagnostic.ts';
 
 export interface Env {
   ALARMS: DurableObjectNamespace;
@@ -73,6 +74,7 @@ export class Alarm extends DurableObject<Env> {
 export default {
   async fetch(request: Request, env: Env) {
     const path = new URL(request.url).pathname;
+    if (path === SOCKET_DIAGNOSTIC_PATH) return socketDiagnosticResponse(request, env.REGISTRATION_KEY);
     if (path === '/health' && request.method === 'GET') return Response.json({ service: 'opaque-alarm', version: 1 });
     if (path !== '/alarms' || request.method !== 'POST') return new Response(null, { status: 404 });
     let body: string;

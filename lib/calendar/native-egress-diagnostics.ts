@@ -43,6 +43,10 @@ export async function nativeEgressDiagnostics(signal: AbortSignal, fetcher: type
 }
 
 export async function nativeEgressDiagnosticResponse(request: Request, siteOrigin?: string, fetcher?: typeof fetch) {
+ return authenticatedDiagnosticResponse(request, siteOrigin, () => nativeEgressDiagnostics(request.signal, fetcher), 'calendar_native_egress_diagnostics');
+}
+
+export async function authenticatedDiagnosticResponse(request: Request, siteOrigin: string | undefined, run: () => Promise<unknown>, auditName: string) {
  if (!request.headers.get('oai-authenticated-user-id')) return Response.json({ error: 'Sign in.' }, { status: 401 });
  if (request.method !== 'POST' || new URL(request.url).search) return Response.json({ error: 'Fixed POST diagnostic only.' }, { status: 400 });
  if (!siteOrigin || request.headers.get('origin') !== siteOrigin) return Response.json({ error: 'Request origin is not allowed.' }, { status: 403 });
@@ -61,7 +65,7 @@ export async function nativeEgressDiagnosticResponse(request: Request, siteOrigi
   } catch { return Response.json({ error: 'No request body is accepted.' }, { status: 400 }); }
   finally { signal.removeEventListener('abort', abort); void reader.cancel().catch(() => {}); }
  }
- const result = await nativeEgressDiagnostics(request.signal, fetcher);
- console.info('calendar_native_egress_diagnostics', result);
+ const result = await run();
+ console.info(auditName, result);
  return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
 }
