@@ -16,7 +16,10 @@ const managedLinux = readExecutionProfile() === "managed-linux";
 
 const localBindingConfig = {
   main: "./build/sites-worker.ts",
-  compatibility_flags: ["nodejs_compat"],
+  // Request public-front-door routing on managed Workers as well as the
+  // application's exact-host checks. This flag alone is not proof of Sites'
+  // connection-time address policy; record hosted observations separately.
+  compatibility_flags: ["nodejs_compat", "global_fetch_strictly_public"],
   d1_databases: d1
     ? [
         {

@@ -7,12 +7,14 @@ import { seal } from '../lib/calendar/crypto.ts';
 import { signedHeaders, CALLBACK_PATH, type AlarmJob } from '../shared/alarm.ts';
 
 test('Workers/D1 revocation races during provider revalidation prevent signed dispatch',async()=>{
-  const script=(await build({stdin:{contents:`import {CalendarService} from './lib/calendar/service.ts';export default {fetch(r,e){return new CalendarService(e,{callbackTransport:{post:(url,body,headers,signal)=>fetch(url,{method:'POST',body,headers,signal,redirect:'manual'})}}).handle(r)}};`,resolveDir:process.cwd(),sourcefile:'delivery-races.ts'},bundle:true,write:false,format:'esm',platform:'browser',target:'es2022'})).outputFiles[0].text;
+  // This fixture controls only the service clock, not production behavior.
+  // Runner load must not make the event expire before registration.
+  const script=(await build({stdin:{contents:`import {CalendarService} from './lib/calendar/service.ts';export default {fetch(r,e){return new CalendarService(e,{now:()=>Number(r.headers.get('x-fixture-now')),callbackTransport:{post:(url,body,headers,signal)=>fetch(url,{method:'POST',body,headers,signal,redirect:'manual'})}}).handle(r)}};`,resolveDir:process.cwd(),sourcefile:'delivery-races.ts'},bundle:true,write:false,format:'esm',platform:'browser',target:'es2022'})).outputFiles[0].text;
   for(const action of ['disable','disconnect','unsubscribe','expiry','edit','cancel']) {
     const encryption=btoa('e'.repeat(32)),registration=btoa('r'.repeat(32)),callback=btoa('c'.repeat(32));
     let hold=false;let job:AlarmJob|undefined, delivered=0, arrived!:()=>void,release!:()=>void;
     const lookup=new Promise<void>(r=>arrived=r), blocked=new Promise<void>(r=>release=r);
-    let dueAt=Date.now()+5000;
+    let fixtureNow=Date.now(),dueAt=fixtureNow+5000;
     const event={id:'one',summary:'Synthetic race test',start:{dateTime:new Date(dueAt).toISOString()},status:'confirmed'};
     const mf=new Miniflare({modules:true,script,compatibilityDate:'2026-05-15',cf:false,d1Databases:{DB:'race-'+action},bindings:{SITE_ORIGIN:'https://site.example',TOKEN_ENCRYPTION_KEY:encryption,GOOGLE_CLIENT_ID:'client',GOOGLE_CLIENT_SECRET:'secret',DISPATCHER_ORIGIN:'https://alarm.example',ALARM_ENCRYPTION_KEY:encryption,ALARM_REGISTRATION_KEY:registration,ALARM_CALLBACK_KEY:callback},outboundService:async(request)=>{
       const url=new URL(request.url);
@@ -30,21 +32,22 @@ test('Workers/D1 revocation races during provider revalidation prevent signed di
       await db.prepare("INSERT INTO calendars VALUES ('alice','personal','Personal',1,'g1')").run();
       await db.prepare("INSERT INTO watches (id,owner,calendar_id,generation,token_hash,resource_id,expiration,status) VALUES ('watch','alice','personal','g1','hash','resource',?,'active')").bind(Date.now()+3600_000).run();
       const params={name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example/callback',secret:'whsec_'+btoa('s'.repeat(32))}};
-      const call=(path:string,body:unknown)=>mf.dispatchFetch('https://site.example'+path,{method:'POST',headers:{origin:'https://site.example','oai-authenticated-user-id':'alice'},body:JSON.stringify(body)});
+      const call=(path:string,body:unknown)=>mf.dispatchFetch('https://site.example'+path,{method:'POST',headers:{origin:'https://site.example','oai-authenticated-user-id':'alice','x-fixture-now':String(fixtureNow)},body:JSON.stringify(body)});
       assert.ok(((await (await call('/mcp',{id:1,method:'events/subscribe',params})).json()) as {result?:unknown}).result);
-      dueAt=Date.now()+250;event.start.dateTime=new Date(dueAt).toISOString();
+      dueAt=fixtureNow+250;event.start.dateTime=new Date(dueAt).toISOString();
       assert.equal((await call('/api/calendars/resync',{calendarId:'personal'})).status,200);assert.ok(job);
-      await new Promise(r=>setTimeout(r,Math.max(0,dueAt-Date.now()+10)));
+      fixtureNow=dueAt+10;
       const body=JSON.stringify(job);
-      assert.equal((await mf.dispatchFetch('https://site.example'+CALLBACK_PATH,{method:'POST',body,headers:await signedHeaders(callback,CALLBACK_PATH,body)})).status,503);
+      const wakeHeaders=async()=>({...await signedHeaders(callback,CALLBACK_PATH,body,fixtureNow),'x-fixture-now':String(fixtureNow)});
+      assert.equal((await mf.dispatchFetch('https://site.example'+CALLBACK_PATH,{method:'POST',body,headers:await wakeHeaders()})).status,503);
       assert.equal(delivered,1);assert.ok(await db.prepare("SELECT subscription_id FROM deliveries WHERE status = 'pending'").first());
       await db.prepare('UPDATE deliveries SET next_at = 0').run();hold=true;
-      const wake=mf.dispatchFetch('https://site.example'+CALLBACK_PATH,{method:'POST',body,headers:await signedHeaders(callback,CALLBACK_PATH,body)});
+      const wake=mf.dispatchFetch('https://site.example'+CALLBACK_PATH,{method:'POST',body,headers:await wakeHeaders()});
       await lookup;
       if(action==='disable')assert.equal((await call('/api/calendars/disable',{calendarId:'personal'})).status,200);
       if(action==='disconnect')assert.equal((await call('/api/google/disconnect',{})).status,200);
       if(action==='unsubscribe')await call('/mcp',{id:2,method:'events/unsubscribe',params});
-      if(action==='expiry')await db.prepare('UPDATE subscriptions SET expires_at = ?').bind(Date.now()-1).run();
+      if(action==='expiry')await db.prepare('UPDATE subscriptions SET expires_at = ?').bind(fixtureNow-1).run();
       if(action==='edit')event.start.dateTime=new Date(dueAt+60_000).toISOString();
       if(action==='cancel')event.status='cancelled';
       release();assert.equal((await wake).status,204);assert.equal(delivered,1,action);

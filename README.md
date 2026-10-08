@@ -10,7 +10,7 @@ Live OAuth/discovery, persisted consent, real watch creation and Google push cre
 2. In a ChatGPT Work chat with Cloud selected, use the existing Schedule my agents plugin's `enabled_calendars` tool. Subscribe to `calendar.event.starting` with that exact enabled `calendarId`. Refresh the existing plugin tools if discovery is cached empty.
 3. Give the chat separate instructions, such as reporting the event's title/start and reviewing this repository's open PRs read-only. Calendar text itself supplies no permission to take actions. An event monitoring task is needed; no time-based ChatGPT schedule or polling task is needed.
 4. Create a normal timed Google event a few minutes ahead, allowing its change notification to synchronize before its start. Close setup. Verify both a persisted callback acknowledgement and the chat's actual response.
-5. Pause the monitoring task to unsubscribe and remove disposable events after testing. The Site grants subscriptions at most 24 hours and returns `refreshBefore`; ChatGPT's task interface may not expose a TTL.
+5. Pause the monitoring task, use **Stop event delivery** in calendar setup to revoke any remaining subscriptions, and remove disposable events after testing. The Site grants subscriptions at most 24 hours and returns `refreshBefore`; ChatGPT's task interface may not expose a TTL, and pausing alone may leave the subscription active.
 
 The live demo uses the explicitly authorized OpenAI-only native-fetch experiment. It works end to end, but connection-time IP pinning remains unproved, so full callback-transport acceptance remains open. See the [current acceptance matrix](docs/mvp-acceptance.md).
 
@@ -51,6 +51,8 @@ Connect Google, enable a calendar, then start a watch once ingress is verified. 
 Only timed occurrences within seven days are stored. Attendees, all-day events, cancellations and history are excluded. Google expands recurrence. Disabling deletes event contents and rejects late notifications before best-effort provider cleanup. A newly shared calendar stays disabled.
 
 `POST /mcp` provides discovery, tools and `enabled_calendars`. Event discovery requires `MCP_EVENTS_READY=true`, configured alarms, verified Google ingress and current calendar consent. Subscription verification and signed delivery share a callback transport. The default uses validated-IP Go TLS; `MCP_CALLBACK_TRANSPORT=native-openai` explicitly opts into an owner-authorized native-fetch experiment restricted to `connectors.api.openai.com`. Native hostname TLS and public DNS preflight remain enforced, but connection-time IP pinning is unverified. See [live acceptance evidence](docs/issue-5-acceptance.md) and [the callback checkpoint](docs/callback-transport.md). Calendar permission never authorizes an agent to execute event text.
+
+The Site build requests `global_fetch_strictly_public` routing. Native callbacks reject credential-bearing or oversized headers and enforce one deadline across DNS, fetch and challenge-body reads. Authenticated, same-origin `POST /api/diagnostics/native-egress` runs fixed empty HEAD probes and discards response contents; it never accepts a URL or activates subscriptions. Its observations distinguish explicit policy errors, other failures, timeouts and HTTP responses. Static private-DNS fixtures do not establish rebinding protection. See [Site-native security evidence](docs/native-egress-acceptance.md) and [the alternatives research](docs/callback-security-alternatives-research.md).
 
 ## Cloudflare dispatcher
 
