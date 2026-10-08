@@ -36,6 +36,11 @@ test('native egress diagnostics require authenticated same-origin empty POST bef
  assert.equal(calls, 0);
  const response = await nativeEgressDiagnosticResponse(new Request(url, { method: 'POST', headers }), origin, fetcher);
  assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store'); assert.equal(calls, 10);
+ // Fetch implementations may represent Content-Length: 0 with a body stream.
+ const emptyStream = new Request(url, { method: 'POST', headers, body: '' });
+ assert.notEqual(emptyStream.body, null);
+ assert.equal((await nativeEgressDiagnosticResponse(emptyStream, origin, fetcher)).status, 200);
+ assert.equal(calls, 20);
 });
 
 test('an aborted native egress diagnostic sends no requests and records no policy success', async () => {

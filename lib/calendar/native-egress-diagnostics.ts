@@ -46,7 +46,21 @@ export async function nativeEgressDiagnosticResponse(request: Request, siteOrigi
  if (!request.headers.get('oai-authenticated-user-id')) return Response.json({ error: 'Sign in.' }, { status: 401 });
  if (request.method !== 'POST' || new URL(request.url).search) return Response.json({ error: 'Fixed POST diagnostic only.' }, { status: 400 });
  if (!siteOrigin || request.headers.get('origin') !== siteOrigin) return Response.json({ error: 'Request origin is not allowed.' }, { status: 403 });
- if (request.body !== null) return Response.json({ error: 'No request body is accepted.' }, { status: 400 });
+ // Sites may forward an empty POST as a non-null, already-ended stream.
+ // Check its first read rather than treating the stream object as payload.
+ if (request.body) {
+  const reader = request.body.getReader();
+  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(1000)]);
+  let abort!: () => void;
+  try {
+   signal.throwIfAborted();
+   const stopped = new Promise<never>((_, reject) => {
+    abort = () => reject(signal.reason); signal.addEventListener('abort', abort, { once: true });
+   });
+   if (!(await Promise.race([reader.read(), stopped])).done) return Response.json({ error: 'No request body is accepted.' }, { status: 400 });
+  } catch { return Response.json({ error: 'No request body is accepted.' }, { status: 400 }); }
+  finally { signal.removeEventListener('abort', abort); void reader.cancel().catch(() => {}); }
+ }
  const result = await nativeEgressDiagnostics(request.signal, fetcher);
  console.info('calendar_native_egress_diagnostics', result);
  return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
