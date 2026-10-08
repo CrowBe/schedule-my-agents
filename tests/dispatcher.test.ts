@@ -10,13 +10,38 @@ import { seal } from '../lib/calendar/crypto.ts';
 import { CALLBACK_PATH, LATE_WINDOW, mac, signedHeaders, verified, type AlarmJob } from '../shared/alarm.ts';
 
 async function dispatcherBundle() {
-  return (await build({ entryPoints: ['dispatcher/src/index.ts'], bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022', external: ['cloudflare:workers'] })).outputFiles[0].text;
+  return (await build({ entryPoints: ['dispatcher/src/index.ts'], bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022', external: ['cloudflare:workers', 'cloudflare:sockets'] })).outputFiles[0].text;
 }
 async function waitFor(check: () => Promise<boolean>, timeout = 12_000) {
   const until = Date.now() + timeout;
   while (Date.now() < until) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 100)); }
   assert.fail('Durable alarm did not complete within the test deadline.');
 }
+
+test('timer socket diagnostic authenticates fixed empty requests before any DNS or socket work', async () => {
+ const registration = btoa('r'.repeat(32)); let dns = 0;
+ const mf = new Miniflare({ modules: true, script: await dispatcherBundle(), compatibilityDate: '2026-05-15', cf: false,
+  durableObjects: { ALARMS: { className: 'Alarm', useSQLite: true } },
+  bindings: { REGISTRATION_KEY: registration },
+  outboundService: async request => {
+   assert.equal(new URL(request.url).hostname, 'cloudflare-dns.com'); dns++;
+   return Response.json({ Status: 0, Answer: [] });
+  },
+ });
+ const path = '/diagnostics/callback-socket', url = 'https://alarm.example' + path;
+ try {
+  assert.equal((await mf.dispatchFetch(url, { method: 'POST' })).status, 401);
+  assert.equal((await mf.dispatchFetch(url + '?host=private', { method: 'POST' })).status, 400);
+  assert.equal((await mf.dispatchFetch(url)).status, 400);
+  assert.equal((await mf.dispatchFetch(url, { method: 'POST', body: '{}', headers: await signedHeaders(registration, path, '{}') })).status, 400);
+  assert.equal(dns, 0);
+  const response = await mf.dispatchFetch(url, { method: 'POST', headers: await signedHeaders(registration, path, '') });
+  assert.equal(response.status, 200); assert.equal(dns, 4);
+  const result = await response.json() as { applicationBytesSent: number; callbackContractVerified: boolean; observations: { outcome: string }[] };
+  assert.equal(result.applicationBytesSent, 0); assert.equal(result.callbackContractVerified, false);
+  assert.ok(result.observations.every(x => x.outcome === 'resolution_or_address_policy_failure'));
+ } finally { await mf.dispose(); }
+});
 
 test('real SQLite Durable Object alarm survives runtime restart; failed/redirect callback retries and registration is idempotent', async () => {
   const script = await dispatcherBundle(); const persist = mkdtempSync(join(tmpdir(), 'opaque-alarm-'));

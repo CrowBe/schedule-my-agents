@@ -4,6 +4,7 @@ import { nativeOpenAICallbackTransport } from '../lib/calendar/native-callback-t
 import { nativeFetchDiagnosticResponse, nativeFetchDiagnosticPage } from '../lib/calendar/native-fetch-diagnostics';
 import { authenticatedDiagnosticResponse, nativeEgressDiagnosticResponse } from '../lib/calendar/native-egress-diagnostics';
 import { nativeConnectionDiagnostics, nativeRebindingDiagnostics } from '../lib/calendar/native-connection-diagnostics';
+import { timerSocketDiagnostics } from '../lib/calendar/timer-socket-diagnostics';
 import { CalendarService } from "../lib/calendar/service";
 import handler from "vinext/server/fetch-handler";
 import { runWithConnectorBinding } from "../lib/connector-context";
@@ -12,6 +13,9 @@ import type { ConnectorBinding } from "../lib/connector-contract.mjs";
 export default {
   async fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext<{ CONNECTORS?: ConnectorBinding }>) {
     const path = new URL(request.url).pathname;
+    if (path === '/diagnostics/timer-socket') return nativeFetchDiagnosticPage(request, 'timer-socket');
+    if (path === '/api/diagnostics/timer-socket') return authenticatedDiagnosticResponse(request,
+      (env as unknown as { SITE_ORIGIN?: string }).SITE_ORIGIN, () => timerSocketDiagnostics(env, request.signal), 'calendar_timer_socket_diagnostics');
     if (path === '/diagnostics/native-fetch') {
       return nativeFetchDiagnosticPage(request);
     }

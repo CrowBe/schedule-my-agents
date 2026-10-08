@@ -50,8 +50,10 @@ test('DNS-change experiment observes both answers without claiming the runtime p
   fetcher: async (input, init) => {
    const url = new URL(String(input)); assert.equal(init?.body, undefined);
    assert.equal(init?.redirect, 'manual'); assert.equal(init?.credentials, 'omit');
-   if (url.hostname === 'cloudflare-dns.com') {
-    assert.deepEqual([...new Headers(init?.headers)], [['accept', 'application/dns-json']]);
+   if (url.hostname === 'dns.google') {
+    assert.deepEqual([...new Headers(init?.headers)], [['accept', 'application/dns-json'], ['cache-control', 'no-cache']]);
+    assert.equal(init?.cache, 'no-store'); assert.equal(url.searchParams.get('edns_client_subnet'), '0.0.0.0/0');
+    assert.match(url.searchParams.get('random_padding')!, /^[0-9a-f-]{36}$/);
     const host = url.searchParams.get('name')!;
     assert.ok(host.endsWith('.1u.ms') || host.endsWith('.rebind.network'));
     assert.ok(host.split('.').every(label => label.length <= 63));

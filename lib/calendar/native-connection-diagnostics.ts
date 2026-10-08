@@ -1,17 +1,9 @@
 import { publicAddress, validatedAddress } from './callback-policy.ts';
 import { resolveCallbackAddresses } from './callback-dns.ts';
+import { boundedProbe } from '../../shared/probe-deadline.ts';
+export { boundedProbe } from '../../shared/probe-deadline.ts';
 
-export type ConnectionObservation = { name: string; outcome: string; status?: number; elapsedMs: number; lookupCalls?: number; identityChecks?: number };
-
-export async function boundedProbe<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
- signal.throwIfAborted();
- let abort!: () => void;
- const stopped = new Promise<never>((_, reject) => {
-  abort = () => reject(signal.reason); signal.addEventListener('abort', abort, { once: true });
- });
- try { return await Promise.race([work, stopped]); }
- finally { signal.removeEventListener('abort', abort); }
-}
+export type ConnectionObservation = { name: string; outcome: string; status?: number; elapsedMs: number; lookupCalls?: number; identityChecks?: number; stage?: string; failureCategory?: string };
 
 export async function emptyHead(name: string, url: string, signal: AbortSignal, fetcher: typeof fetch, host?: string): Promise<ConnectionObservation> {
  const started = Date.now(), deadline = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
@@ -29,11 +21,12 @@ export async function emptyHead(name: string, url: string, signal: AbortSignal, 
 
 export async function nodeTlsProbe(name: string, host: string, address: string, servername: string, signal: AbortSignal): Promise<ConnectionObservation> {
  const started = Date.now(), deadline = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
- let lookupCalls = 0, identityChecks = 0;
- const result = (outcome: string) => ({ name, outcome, lookupCalls, identityChecks, elapsedMs: Date.now() - started });
+ let lookupCalls = 0, identityChecks = 0, stage = 'module_load';
+ const result = (outcome: string) => ({ name, outcome, lookupCalls, identityChecks, stage, elapsedMs: Date.now() - started });
  try {
   validatedAddress([address]); deadline.throwIfAborted();
   const tls = await import('node:tls');
+  stage = 'tls_connect';
   return await new Promise<ConnectionObservation>(resolve => {
    // Fixed synthetic handshakes only. Never send HTTP/application bytes.
    const socket = tls.connect({ host, port: 443, servername, rejectUnauthorized: true,
@@ -52,7 +45,12 @@ export async function nodeTlsProbe(name: string, host: string, address: string, 
    deadline.addEventListener('abort', abort, { once: true });
    if (deadline.aborted) abort();
   });
- } catch { return result(deadline.aborted ? 'timeout' : 'api_or_option_unavailable'); }
+ } catch (error) {
+  const message = error instanceof Error ? error.message : '';
+  const failureCategory = /not implemented|not supported|unsupported|unavailable|cannot find/i.test(message) ? 'unsupported_api_or_option' :
+   /disallowed|prohibited|forbidden/i.test(message) ? 'policy_rejection' : 'unclassified_failure';
+  return { ...result(deadline.aborted ? 'timeout' : 'api_or_option_unavailable'), failureCategory };
+ }
 }
 
 export async function nativeConnectionDiagnostics(signal: AbortSignal, options: {
@@ -101,9 +99,12 @@ export async function nativeConnectionDiagnostics(signal: AbortSignal, options: 
 
 export async function fixtureAddresses(host: string, signal: AbortSignal, fetcher: typeof fetch): Promise<string[]> {
  const deadline = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
- const url = new URL('https://cloudflare-dns.com/dns-query'); url.searchParams.set('name', host); url.searchParams.set('type', 'A');
+ // Independent HTTP cache keys keep the observation from replaying the first
+ // DNS JSON response. Google's documented padding parameter is DNS-neutral.
+ const url = new URL('https://dns.google/resolve'); url.searchParams.set('name', host); url.searchParams.set('type', 'A');
+ url.searchParams.set('edns_client_subnet', '0.0.0.0/0'); url.searchParams.set('random_padding', crypto.randomUUID());
  deadline.throwIfAborted();
- const pending = fetcher(url, { headers: { Accept: 'application/dns-json' }, redirect: 'manual', credentials: 'omit', signal: deadline });
+ const pending = fetcher(url, { headers: { Accept: 'application/dns-json', 'Cache-Control': 'no-cache' }, cache: 'no-store', redirect: 'manual', credentials: 'omit', signal: deadline });
  void pending.then(response => { if (deadline.aborted) void response.body?.cancel().catch(() => {}); }, () => {});
  const response = await boundedProbe(pending, deadline);
  if (!response.ok || response.redirected || !response.body) { void response.body?.cancel().catch(() => {}); throw new Error('fixture_dns_unavailable'); }
