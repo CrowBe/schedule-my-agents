@@ -2,7 +2,8 @@ import { connect } from 'cloudflare:sockets';
 import { resolveCallbackAddresses } from '../../lib/calendar/callback-dns.ts';
 import { validatedAddress } from '../../lib/calendar/callback-policy.ts';
 import { openCallbackSocket } from '../../lib/calendar/callback-socket.ts';
-import { boundedBody, verified } from '../../shared/alarm.ts';
+import { callbackFailureCategory } from '../../lib/calendar/callback-diagnostics.ts';
+import { verified } from '../../shared/alarm.ts';
 import { boundedProbe } from '../../shared/probe-deadline.ts';
 
 export const SOCKET_DIAGNOSTIC_PATH = '/diagnostics/callback-socket';
@@ -11,11 +12,14 @@ export const SOCKET_DIAGNOSTIC_PATH = '/diagnostics/callback-socket';
 // receives no calendar identities, event plaintext, OAuth or decryption keys.
 export async function socketDiagnosticResponse(request: Request, secret: string) {
  if (request.method !== 'POST' || new URL(request.url).search) return new Response(null, { status: 400 });
- let body: string;
- try { body = await boundedProbe(boundedBody(request), AbortSignal.any([request.signal, AbortSignal.timeout(1000)])); }
- catch { return new Response(null, { status: 400 }); }
- if (!await verified(request, body, secret, Date.now())) return new Response(null, { status: 401 });
- if (body !== '') return new Response(null, { status: 400 });
+ if (request.body) {
+  const reader = request.body.getReader();
+  try {
+   if (!(await boundedProbe(reader.read(), AbortSignal.any([request.signal, AbortSignal.timeout(1000)]))).done) return new Response(null, { status: 400 });
+  } catch { return new Response(null, { status: 400 }); }
+  finally { void reader.cancel().catch(() => {}); }
+ }
+ if (!await verified(request, '', secret, Date.now())) return new Response(null, { status: 401 });
  const observations = (await Promise.all(['httpbin.org', 'connectors.api.openai.com'].map(async host => {
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(6000)]);
   try {
@@ -29,7 +33,7 @@ export async function socketDiagnosticResponse(request: Request, secret: string)
      return { name: host, address, outcome: 'socket_opened', elapsedMs: Date.now() - started };
     } catch (error) {
      const policy = error instanceof Error && /disallowed|prohibited|forbidden/i.test(error.message);
-     return { name: host, address, outcome: signal.aborted ? 'timeout' : policy ? 'policy_rejection' : 'socket_failure', elapsedMs: Date.now() - started };
+     return { name: host, address, outcome: signal.aborted ? 'timeout' : policy ? 'policy_rejection' : 'socket_failure', failureCategory: callbackFailureCategory(error), elapsedMs: Date.now() - started };
     }
    }));
   } catch { return [{ name: host, outcome: 'resolution_or_address_policy_failure', elapsedMs: 0 }]; }

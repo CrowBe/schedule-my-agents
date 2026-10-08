@@ -24,7 +24,8 @@ test('connection probes discard contents and distinguish Host routing from selec
  assert.equal(calls.length, 27); assert.equal(cancelled, 23);
  assert.deepEqual(handshakes.map(x => x.slice(1)), [
   ['httpbin.org', publicIp, 'httpbin.org'], ['httpbin.org', publicIp, 'example.com'],
-  ['connectors.api.openai.com', publicIp, 'connectors.api.openai.com'],
+  ['httpbin.org', publicIp, 'httpbin.org'], ['httpbin.org', publicIp, 'example.com'],
+  ['connectors.api.openai.com', publicIp, 'connectors.api.openai.com'], ['connectors.api.openai.com', publicIp, 'connectors.api.openai.com'],
  ]);
  assert.equal(result.literalHostRoutingFalsified, true);
  assert.equal(result.applicationBytesSentByTlsProbes, 0);

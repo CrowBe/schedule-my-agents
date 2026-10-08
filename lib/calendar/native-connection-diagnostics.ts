@@ -19,7 +19,7 @@ export async function emptyHead(name: string, url: string, signal: AbortSignal, 
  }
 }
 
-export async function nodeTlsProbe(name: string, host: string, address: string, servername: string, signal: AbortSignal): Promise<ConnectionObservation> {
+export async function nodeTlsProbe(name: string, host: string, address: string, servername: string, signal: AbortSignal, identityHook = true): Promise<ConnectionObservation> {
  const started = Date.now(), deadline = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
  let lookupCalls = 0, identityChecks = 0, stage = 'module_load';
  const result = (outcome: string) => ({ name, outcome, lookupCalls, identityChecks, stage, elapsedMs: Date.now() - started });
@@ -29,10 +29,13 @@ export async function nodeTlsProbe(name: string, host: string, address: string, 
   stage = 'tls_connect';
   return await new Promise<ConnectionObservation>(resolve => {
    // Fixed synthetic handshakes only. Never send HTTP/application bytes.
-   const socket = tls.connect({ host, port: 443, servername, rejectUnauthorized: true,
+   const connectionOptions: import('node:tls').ConnectionOptions & { autoSelectFamily: false } = {
+    host, port: 443, servername, rejectUnauthorized: true, autoSelectFamily: false,
     lookup: (_hostname, _options, callback) => { lookupCalls++; callback(null, address, address.includes(':') ? 6 : 4); },
-    checkServerIdentity: (identity, certificate) => { identityChecks++; return tls.checkServerIdentity(identity, certificate); },
-   });
+    // Omitting the hook retains the library's default identity validation.
+    ...(identityHook ? { checkServerIdentity: (identity: string, certificate: import('node:tls').PeerCertificate) => { identityChecks++; return tls.checkServerIdentity(identity, certificate); } } : {}),
+   };
+   const socket = tls.connect(connectionOptions);
    let finished = false;
    const finish = (outcome: string) => {
     if (finished) return; finished = true;
@@ -84,12 +87,15 @@ export async function nativeConnectionDiagnostics(signal: AbortSignal, options: 
    emptyHead('documentation_literal_original_host', 'https://192.0.2.1/status/204', signal, fetcher, 'httpbin.org'),
    tlsProbe('node_tls_public_custom_lookup', 'httpbin.org', address, 'httpbin.org', signal),
    tlsProbe('node_tls_wrong_identity', 'httpbin.org', address, 'example.com', signal),
+   tlsProbe('node_tls_public_default_identity', 'httpbin.org', address, 'httpbin.org', signal, false),
+   tlsProbe('node_tls_wrong_default_identity', 'httpbin.org', address, 'example.com', signal, false),
   ]));
  } catch { observations.push({ name: 'public_fixture_resolution', outcome: 'resolution_or_address_policy_failure', elapsedMs: 0 }); }
  try {
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
   const address = validatedAddress(await boundedProbe(resolve('connectors.api.openai.com', deadline), deadline));
   observations.push(await tlsProbe('node_tls_callback_custom_lookup', 'connectors.api.openai.com', address, 'connectors.api.openai.com', signal));
+  observations.push(await tlsProbe('node_tls_callback_default_identity', 'connectors.api.openai.com', address, 'connectors.api.openai.com', signal, false));
  } catch { observations.push({ name: 'callback_resolution', outcome: 'resolution_or_address_policy_failure', elapsedMs: 0 }); }
  return { observations, responseContents: 'discarded', applicationBytesSentByTlsProbes: 0,
   actualConnectedAddressObserved: false, callbackContractVerified: false,
