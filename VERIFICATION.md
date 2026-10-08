@@ -1,3 +1,9 @@
+# Existing-infrastructure connection checks — 9 October 2026
+
+All 84 tests, typecheck, lint, Site production build and dispatcher checks pass. Hosted native fetch rejected a real public → loopback DNS-change experiment with HTTP 403, eighteen added non-public literal fixtures returned 403, and invalid TLS fixtures returned 526. Literal-IP plus Host requests returned 403. Node TLS default verification invoked the custom lookup but failed to establish the control/callback connection. The existing timer Worker opened eight public control sockets; all four OpenAI callback addresses failed.
+
+These bounded diagnostics use the existing Site/plugin and free opaque timer, with no calendar data, new service or paid plan. [Hosted evidence and remaining acceptance](docs/callback-guarantee-hosted-evidence.md) and [primary-source alternatives](docs/callback-guarantee-runtime-research.md) distinguish actual observations from the still-unattested complete connection-time policy. #4 remains open, with #1/#6 dependent on it. Earlier checkpoints follow.
+
 # Sites-native callback hardening — 8 October 2026
 
 The exact-host native path passed a fresh signed challenge and delivered a real Google occurrence to the original Work Cloud chat at 20:16 Sydney, accepted once with HTTP 200. All eight fixed non-public literal/DNS fixtures returned 403; a public control returned 200 and the redirect remained an unfollowed 302. These observations support native destination filtering without attesting DNS rebinding or the full connection-time policy. No additional host or paid plan was provisioned.
