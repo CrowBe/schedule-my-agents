@@ -1,8 +1,8 @@
-import { directCallbackTransport, createPinnedCallbackTransport } from '../lib/calendar/callback-transport';
-import { openTunnelSocket } from '../lib/calendar/tunnel-socket';
+import { directCallbackTransport } from '../lib/calendar/callback-transport';
 import { nativeVerificationProbe } from '../lib/calendar/callback-probe';
 import { nativeOpenAICallbackTransport } from '../lib/calendar/native-callback-transport';
 import { nativeFetchDiagnosticResponse, nativeFetchDiagnosticPage } from '../lib/calendar/native-fetch-diagnostics';
+import { nativeEgressDiagnosticResponse } from '../lib/calendar/native-egress-diagnostics';
 import { CalendarService } from "../lib/calendar/service";
 import handler from "vinext/server/fetch-handler";
 import { runWithConnectorBinding } from "../lib/connector-context";
@@ -14,8 +14,14 @@ export default {
     if (path === '/diagnostics/native-fetch') {
       return nativeFetchDiagnosticPage(request);
     }
+    if (path === '/diagnostics/native-egress') {
+      return nativeFetchDiagnosticPage(request, 'native-egress');
+    }
     if (path === '/api/diagnostics/native-fetch') {
       return nativeFetchDiagnosticResponse(request);
+    }
+    if (path === '/api/diagnostics/native-egress') {
+      return nativeEgressDiagnosticResponse(request, (env as unknown as { SITE_ORIGIN?: string }).SITE_ORIGIN);
     }
     // Fixed synthetic diagnostic; never accepts a destination, headers or private payload.
     if (path === '/api/diagnostics/tls' && request.method === 'GET') {
@@ -28,13 +34,9 @@ export default {
     }
 
     if (path.startsWith('/api/') || path === '/mcp') {
-      const mode = env as unknown as { MCP_CALLBACK_PROBE?: string; MCP_CALLBACK_TRANSPORT?: string; CALLBACK_TUNNEL_ORIGIN?: string; CALLBACK_TUNNEL_KEY?: string };
+      const mode = env as unknown as { MCP_CALLBACK_PROBE?: string; MCP_CALLBACK_TRANSPORT?: string };
       const callbackTransport = mode.MCP_CALLBACK_PROBE === 'true' ? nativeVerificationProbe :
-        mode.MCP_CALLBACK_TRANSPORT === 'native-openai' ? nativeOpenAICallbackTransport :
-        mode.MCP_CALLBACK_TRANSPORT === 'pinned-tunnel' ? createPinnedCallbackTransport((addresses, signal) => {
-          if (!mode.CALLBACK_TUNNEL_ORIGIN || !mode.CALLBACK_TUNNEL_KEY) throw new Error('tunnel_not_configured');
-          return openTunnelSocket(mode.CALLBACK_TUNNEL_ORIGIN, mode.CALLBACK_TUNNEL_KEY, addresses, signal);
-        }) : directCallbackTransport;
+        mode.MCP_CALLBACK_TRANSPORT === 'native-openai' ? nativeOpenAICallbackTransport : directCallbackTransport;
       try { return new CalendarService(env, { callbackTransport }).handle(request); }
       catch { return Response.json({ error: 'Persistent storage is unavailable.' }, { status: 503 }); }
     }

@@ -53,3 +53,31 @@ test('native transport preserves non-success status without consuming an oversiz
   assert.equal(cancelled, true);
  }
 });
+
+test('native transport rejects credential-bearing, injected and oversized headers before egress', async () => {
+ let calls = 0;
+ const transport = createNativeOpenAICallbackTransport({ resolve: async () => { calls++; return ['104.18.10.1']; }, fetcher: async () => { calls++; return new Response(); } });
+ const headerCases: Record<string, string>[] = [{ Authorization: 'Bearer synthetic' }, { Cookie: 'synthetic=secret' }, { Host: '127.0.0.1' },
+  { 'webhook-id': 'valid\r\nHost: internal' }, { 'webhook-signature': 'x'.repeat(8193) }];
+ for (const headers of headerCases) {
+  await assert.rejects(transport.post(destination, '{}', headers, signal()), /callback_header/);
+ }
+ assert.equal(calls, 0);
+});
+
+test('native transport bounds stalled DNS, fetch and successful challenge bodies', async () => {
+ for (const stage of ['dns', 'fetch', 'body']) {
+  let cancelled = false;
+  const never = <T>() => new Promise<T>(() => {});
+  const transport = createNativeOpenAICallbackTransport({ timeoutMs: 15,
+   resolve: async () => stage === 'dns' ? never<string[]>() : ['104.18.10.1'],
+   fetcher: async () => stage === 'fetch' ? never<Response>() : new Response(new ReadableStream({ cancel() { cancelled = true; } })),
+  });
+  const result = await Promise.race([
+   transport.post(destination, '{}', {}, signal()).then(() => 'unexpected_response', error => error.name),
+   new Promise<string>(resolve => setTimeout(() => resolve('unbounded'), 60)),
+  ]);
+  assert.equal(result, 'TimeoutError', stage);
+  if (stage === 'body') assert.equal(cancelled, true);
+ }
+});
