@@ -125,7 +125,7 @@ test('Workers E2E: Google sync → encrypted registration → actual alarm → s
     await db.prepare('INSERT INTO calendars VALUES (?, ?, ?, 1, ?)').bind(owner, 'cal', 'Personal', 'grant').run();
     await db.prepare("INSERT INTO watches (id, owner, calendar_id, generation, token_hash, resource_id, expiration, status) VALUES ('watch', ?, 'cal', 'grant', 'hash', 'resource', ?, 'active')").bind(owner, Date.now() + 3600_000).run();
     for(const [principal, count] of [[owner,1],['other',0]] as const) {
-      const catalog = await mf.dispatchFetch('https://site.example/mcp',{method:'POST',headers:{'oai-authenticated-user-id':principal},body:JSON.stringify({id:2,method:'events/list'})});
+      const catalog = await mf.dispatchFetch('https://site.example/mcp',{method:'POST',headers:{'oai-authenticated-user-id':principal},body:JSON.stringify({jsonrpc:'2.0',id:2,method:'events/list'})});
       assert.equal(((await catalog.json()) as {result:{events:unknown[]}}).result.events.length,count);
     }
     const status = await (await mf.dispatchFetch('https://site.example/api/status',{headers:{'oai-authenticated-user-id':owner}})).json() as {eventStartReady:boolean};assert.equal(status.eventStartReady,true);
