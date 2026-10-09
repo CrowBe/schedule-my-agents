@@ -132,7 +132,7 @@ test('optional calendar entrypoint and resource open read-only and hide private 
   const resource = JSON.parse(await (await f.request('/mcp',{id:3,method:'resources/read',params:{uri:CALENDAR_APP_URI}})).text()).result.contents[0];
   assert.equal(resource.mimeType, CALENDAR_APP_MIME);
   assert.ok(resource.text.startsWith('<!doctype html>'));
-  assert.deepEqual(resource._meta.ui.csp, {connectDomains:[],resourceDomains:[],frameDomains:[],baseUriDomains:[]});
+  assert.deepEqual(resource._meta.ui.csp, {connectDomains:[],resourceDomains:[],frameDomains:[]});
   assert.equal(resource._meta['openai/ui'].preferredDisplayMode,'fullscreen');
   assert.ok(!JSON.stringify(resource).includes('alice'));
   assert.equal(JSON.parse(await (await f.request('/mcp',{id:4,method:'resources/read',params:{uri:'file:///etc/passwd'}})).text()).error.code,-32002);

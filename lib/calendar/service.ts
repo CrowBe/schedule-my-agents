@@ -251,7 +251,7 @@ export class CalendarService {
       if (rpc.params?.uri !== CALENDAR_APP_URI) return error(-32002, 'Resource not found.');
       if (!this.dependencies.calendarAppHtml) return error(-32603, 'Calendar view is temporarily unavailable.', 503);
       return reply({ contents: [{uri:CALENDAR_APP_URI,mimeType:CALENDAR_APP_MIME,text:this.dependencies.calendarAppHtml,
-        _meta:{ui:{csp:{connectDomains:[],resourceDomains:[],frameDomains:[],baseUriDomains:[]}},'openai/ui':{availableDisplayModes:['inline','fullscreen'],preferredDisplayMode:'fullscreen'}}}] });
+        _meta:{ui:{csp:{connectDomains:[],resourceDomains:[],frameDomains:[]}},'openai/ui':{availableDisplayModes:['inline','fullscreen'],preferredDisplayMode:'fullscreen'}}}] });
     }
     if (rpc.method === 'tools/call') {
       const name = rpc.params?.name, args = rpc.params?.arguments;
