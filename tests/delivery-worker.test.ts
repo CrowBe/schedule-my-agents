@@ -33,7 +33,7 @@ test('Workers/D1 revocation races during provider revalidation prevent signed di
       await db.prepare("INSERT INTO watches (id,owner,calendar_id,generation,token_hash,resource_id,expiration,status) VALUES ('watch','alice','personal','g1','hash','resource',?,'active')").bind(Date.now()+3600_000).run();
       const params={name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example/callback',secret:'whsec_'+btoa('s'.repeat(32))}};
       const call=(path:string,body:unknown)=>mf.dispatchFetch('https://site.example'+path,{method:'POST',headers:{origin:'https://site.example','oai-authenticated-user-id':'alice','x-fixture-now':String(fixtureNow)},body:JSON.stringify(body)});
-      assert.ok(((await (await call('/mcp',{id:1,method:'events/subscribe',params})).json()) as {result?:unknown}).result);
+      assert.ok(((await (await call('/mcp',{jsonrpc:'2.0',id:1,method:'events/subscribe',params})).json()) as {result?:unknown}).result);
       dueAt=fixtureNow+250;event.start.dateTime=new Date(dueAt).toISOString();
       assert.equal((await call('/api/calendars/resync',{calendarId:'personal'})).status,200);assert.ok(job);
       fixtureNow=dueAt+10;
@@ -46,7 +46,7 @@ test('Workers/D1 revocation races during provider revalidation prevent signed di
       await lookup;
       if(action==='disable')assert.equal((await call('/api/calendars/disable',{calendarId:'personal'})).status,200);
       if(action==='disconnect')assert.equal((await call('/api/google/disconnect',{})).status,200);
-      if(action==='unsubscribe')await call('/mcp',{id:2,method:'events/unsubscribe',params});
+      if(action==='unsubscribe')await call('/mcp',{jsonrpc:'2.0',id:2,method:'events/unsubscribe',params});
       if(action==='expiry')await db.prepare('UPDATE subscriptions SET expires_at = ?').bind(fixtureNow-1).run();
       if(action==='edit')event.start.dateTime=new Date(dueAt+60_000).toISOString();
       if(action==='cancel')event.status='cancelled';

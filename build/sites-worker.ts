@@ -9,6 +9,7 @@ import { CalendarService } from "../lib/calendar/service";
 import handler from "vinext/server/fetch-handler";
 import { runWithConnectorBinding } from "../lib/connector-context";
 import type { ConnectorBinding } from "../lib/connector-contract.mjs";
+import calendarAppHtml from '../.sites-runtime/calendar-app.html?raw';
 
 export default {
   async fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext<{ CONNECTORS?: ConnectorBinding }>) {
@@ -50,7 +51,7 @@ export default {
       const mode = env as unknown as { MCP_CALLBACK_PROBE?: string; MCP_CALLBACK_TRANSPORT?: string };
       const callbackTransport = mode.MCP_CALLBACK_PROBE === 'true' ? nativeVerificationProbe :
         mode.MCP_CALLBACK_TRANSPORT === 'native-openai' ? nativeOpenAICallbackTransport : directCallbackTransport;
-      try { return new CalendarService(env, { callbackTransport }).handle(request); }
+      try { return new CalendarService(env, { callbackTransport, calendarAppHtml }).handle(request); }
       catch { return Response.json({ error: 'Persistent storage is unavailable.' }, { status: 503 }); }
     }
     let binding = ctx.props?.CONNECTORS;

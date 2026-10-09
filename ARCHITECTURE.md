@@ -2,6 +2,8 @@
 
 The calendar is the scheduling interface. The public ChatGPT Site owns authentication, Google OAuth, calendar consent, MCP and D1. A separately deployed Cloudflare Worker stores opaque immutable alarms. Both deployments share this repository.
 
+The optional plugin Calendar settings view is an MCP App resource served by the same Site. Global/thread entrypoints load owner-scoped status through an app-visible read-only tool. Its app-visible action tool maps a fixed action enum to the existing consent routes; it accepts no owner, destination or arbitrary route. Google OAuth stays in the top-level Site browser flow, with its existing PKCE, cookie and identity checks. The Site and plugin share `app/setup.tsx`; only their clients differ. The embedded HTML has no external assets or network permissions and communicates through the MCP Apps SDK bridge. Tool visibility metadata is a presentation hint; Sites identity and persisted consent enforce authority.
+
 ## Authority and scheduling
 
 `CalendarService` orchestrates consent and sync; `GoogleCalendar` owns Google HTTP and recurrence expansion; `Store` guards D1 commits. Provider push is authenticated using the persisted channel and current consent generation, independently of visitor identity headers.

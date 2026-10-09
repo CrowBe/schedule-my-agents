@@ -184,7 +184,7 @@ test('Workers MCP subscription lifecycle with test-only callback transport and r
     await db.prepare("INSERT INTO calendars VALUES ('alice','personal','Personal',1,'g1')").run();
     const params={name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example.com/callback',secret:'whsec_'+btoa('s'.repeat(32))}};
     const rpc=async(method:string,owner='alice',transport=true)=> {
-      const response=await mf.dispatchFetch('https://example.chatgpt.site/mcp',{method:'POST',headers:{'oai-authenticated-user-id':owner,...(transport?{'test-transport':'true'}:{})},body:JSON.stringify({id:1,method,params})});
+      const response=await mf.dispatchFetch('https://example.chatgpt.site/mcp',{method:'POST',headers:{'oai-authenticated-user-id':owner,...(transport?{'test-transport':'true'}:{})},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});
       return await response.json() as {result?:{id:string};error?:{code:number;data?:{reason:string}}};
     };
     assert.equal((await rpc('events/subscribe','alice',false)).error?.data?.reason,'transport_unavailable');
@@ -194,7 +194,7 @@ test('Workers MCP subscription lifecycle with test-only callback transport and r
     assert.equal((await rpc('events/subscribe','bob')).error?.code,-32001);
     await rpc('events/unsubscribe'); await rpc('events/unsubscribe');
     assert.equal(await (await mf.getD1Database('DB')).prepare('SELECT id FROM subscriptions').first(),null);
-    assert.deepEqual(await (await mf.dispatchFetch('https://example.chatgpt.site/mcp',{method:'POST',headers:{'oai-authenticated-user-id':'alice'},body:JSON.stringify({id:2,method:'events/list'})})).json(),{jsonrpc:'2.0',id:2,result:{events:[]}});
+    assert.deepEqual(await (await mf.dispatchFetch('https://example.chatgpt.site/mcp',{method:'POST',headers:{'oai-authenticated-user-id':'alice'},body:JSON.stringify({jsonrpc:'2.0',id:2,method:'events/list'})})).json(),{jsonrpc:'2.0',id:2,result:{events:[]}});
   } finally { await mf.dispose(); }
 });
 

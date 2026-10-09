@@ -1,35 +1,45 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-type Calendar = { id: string; summary: string; accessRole: string; enabled: boolean };
-type Status = { checkedAt: number; connected: boolean; oauthReady: boolean; webhookVerified: boolean; eventStartReady: boolean; alarmReady: boolean; dueWork: number; subscriptions: { calendar_id: string; count: number }[]; watches: { calendar_id: string; status: string; expiration: number; synced_at: number | null; sync_failed: number }[] };
-export default function Home() {
-  const [status, setStatus] = useState<Status | null>(null);
-  const [calendars, setCalendars] = useState<Calendar[]>([]);
+import type { SetupCalendar, SetupStatus, SetupSnapshot, SetupClient } from '../lib/calendar/setup-contract';
+const siteClient: SetupClient = {
+  async load() {
+    const response = await fetch('/api/status'); const status = await response.json() as SetupStatus & { error?: string };
+    if (!response.ok) throw new Error(status.error);
+    let calendars: SetupCalendar[] = [];
+    if (status.connected) {
+      const response = await fetch('/api/calendars'); const result = await response.json() as { calendars: SetupCalendar[]; error?: string };
+      if (!response.ok) throw new Error(result.error); calendars = result.calendars;
+    }
+    return { status, calendars, siteUrl: location.origin };
+  },
+  async action(path, calendarId) {
+    const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calendarId }) });
+    const result = await response.json() as { error?: string }; if (!response.ok) throw new Error(result.error);
+  },
+};
+export default function Home({ client = siteClient, initialSnapshot, embedded = false }: { client?: SetupClient; initialSnapshot?: SetupSnapshot; embedded?: boolean } = {}) {
+  const [status, setStatus] = useState<SetupStatus | null>(initialSnapshot?.status ?? null);
+  const [calendars, setCalendars] = useState<SetupCalendar[]>(initialSnapshot?.calendars ?? []);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
-    const response = await fetch('/api/status'); const data = await response.json() as Status & { error?: string };
-    if (!response.ok) throw new Error(data.error); setStatus(data);
-    if (data.connected) {
-      const response = await fetch('/api/calendars'); const result = await response.json() as { calendars: Calendar[]; error?: string };
-      if (!response.ok) throw new Error(result.error); setCalendars(result.calendars);
-    } else setCalendars([]);
-  }, []);
-  useEffect(() => { Promise.resolve().then(load).catch(e => setError(e.message)); }, [load]);
+    const data = await client.load(); setStatus(data.status); setCalendars(data.calendars);
+  }, [client]);
+  useEffect(() => { if (!initialSnapshot) Promise.resolve().then(load).catch(e => setError(e.message)); }, [load, initialSnapshot]);
   async function action(path: string, calendarId?: string) {
     setBusy(true); setError('');
     try {
-      const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calendarId }) });
-      const result = await response.json() as { error?: string }; if (!response.ok) throw new Error(result.error);
+      await client.action(path, calendarId);
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : 'Please try again.'); } finally { setBusy(false); }
   }
-  return <main>
+  return <main className={embedded ? 'embedded' : undefined}>
     <header><span className="wordmark">Schedule my agents</span><span className="tag">Calendar bridge · Bounded demo</span></header>
     <section className="intro"><p className="eyebrow">YOUR CALENDAR, YOUR CHOICE</p><h1>Choose the calendar<br/>your agent can see.</h1><p>Keep scheduling in Google Calendar. Connect your account, then explicitly enable the calendars you want to share.</p></section>
+    {embedded && <div className="refresh"><button disabled={busy} onClick={() => { setError(''); load().catch(e => setError(e.message)); }}>Refresh connection</button><p className="muted">After connecting Google in the browser, refresh here. Opening this view does not change your permissions.</p></div>}
     {error && <div className="error" role="alert">{error} <button disabled={busy} onClick={() => { setError(''); load().catch(e => setError(e.message)); }}>Retry</button></div>}
     <div className="steps">
       <section className="panel"><div className="step">01 / CONNECTION</div><h2>Connect Google</h2><p>Read-only calendar access. Connecting does not enable any calendar.</p>
-        {status?.connected ? <div className="connection"><span>Google connected</span><button disabled={busy} onClick={() => action('/api/google/disconnect')}>Disconnect</button></div> : <form method="post" action="/api/google/connect"><button className="primary" disabled={!status?.oauthReady || busy}>Connect Google</button></form>}
+        {status?.connected ? <div className="connection"><span>Google connected</span><button disabled={busy} onClick={() => action('/api/google/disconnect')}>Disconnect</button></div> : client.connect ? <button className="primary" disabled={!status?.oauthReady || busy} onClick={() => client.connect!().catch(e => setError(e.message))}>Connect Google</button> : <form method="post" action="/api/google/connect"><button className="primary" disabled={!status?.oauthReady || busy}>Connect Google</button></form>}
         {!status?.oauthReady && status && <p className="muted">Google authorization is awaiting configuration by the Site owner.</p>}
       </section>
       <section className="panel"><div className="step">02 / CALENDAR PERMISSION</div><h2>Enable a calendar</h2><p>Every calendar starts disabled. Newly shared calendars stay disabled until you choose them.</p>

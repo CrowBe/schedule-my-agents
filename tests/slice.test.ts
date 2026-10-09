@@ -7,6 +7,7 @@ import { GoogleCalendar, normalize, SCOPES } from '../lib/calendar/google.ts';
 import { open } from '../lib/calendar/crypto.ts';
 import { Store } from '../lib/calendar/store.ts';
 import type { CalendarProvider, Environment, Statement, CalendarEvent } from '../lib/calendar/types.ts';
+import { CALENDAR_APP_URI, CALENDAR_APP_MIME } from '../lib/calendar/setup-contract.ts';
 function fixture() {
   const sql = new DatabaseSync(':memory:');
   for (const file of readdirSync('drizzle').filter(f => f.endsWith('.sql')).sort()) sql.exec(readFileSync(`drizzle/${file}`, 'utf8'));
@@ -35,9 +36,18 @@ function fixture() {
     async stopWatchingCalendar(id) { stops.push(id); },
     async syncEvents(id) { syncs.push(id); return events; },
   };
-  const service = () => new CalendarService(env, { provider: async () => provider, now: () => now });
+  const service = () => new CalendarService(env, { provider: async () => provider, now: () => now, calendarAppHtml: '<!doctype html><title>Calendar settings</title>' });
   async function request(path: string, body?: unknown, owner = 'alice') {
-    return service().handle(new Request(env.SITE_ORIGIN + path, { method: body === undefined ? 'GET' : 'POST', headers: { 'oai-authenticated-user-id': owner, origin: env.SITE_ORIGIN!, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }));
+    const headers = new Headers({ 'oai-authenticated-user-id': owner, origin: env.SITE_ORIGIN!, 'content-type': 'application/json' });
+    // The fixture is a valid MCP client; invalid envelopes use the raw handler below.
+    if (path === '/mcp' && body && typeof body === 'object') {
+      const rpc = body as { method: string; params?: { _meta?: Record<string,unknown>; name?: string; uri?: string } };
+      body = { jsonrpc: '2.0', ...body };
+      const version = rpc.params?._meta?.['io.modelcontextprotocol/protocolVersion'];
+      if (typeof version === 'string') { headers.set('MCP-Protocol-Version', version); headers.set('Mcp-Method', rpc.method); }
+      if (version && (rpc.params?.name || rpc.params?.uri)) headers.set('Mcp-Name', rpc.params.name ?? rpc.params.uri!);
+    }
+    return service().handle(new Request(env.SITE_ORIGIN + path, { method: body === undefined ? 'GET' : 'POST', headers, body: body === undefined ? undefined : JSON.stringify(body) }));
   }
   async function webhook(channel = channels[0], overrides: Record<string, string> = {}) {
     return service().handle(new Request(env.SITE_ORIGIN + '/api/google/webhook', { method: 'POST', headers: { 'x-goog-channel-id': channel.id, 'x-goog-channel-token': channel.token, 'x-goog-resource-id': `resource-${channel.id}`, 'x-goog-resource-state': 'exists', 'x-goog-message-number': '2', ...overrides } }));
@@ -73,6 +83,121 @@ test('user isolation applies to watches, MCP discovery and subscriptions', async
   assert.equal((await f.request('/api/calendars/watch', {calendarId:'personal'}, 'bob')).status, 403);
   const denied = JSON.parse(await (await f.request('/mcp', {id:1,method:'events/subscribe',params:{name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example.com/callback',secret:'whsec_'+btoa('s'.repeat(32))}}}, 'bob')).text()); assert.equal(denied.error.code, -32001);
   const tools = JSON.parse(await (await f.request('/mcp', {id:2,method:'tools/call',params:{name:'enabled_calendars'}}, 'bob')).text()); assert.equal(tools.result.content[0].text, '[]');
+});
+test('MCP discovery publishes modern server identity without exposing account data', async () => {
+  const f = fixture();
+  await f.request('/api/calendars/enable', {calendarId:'personal'});
+  const discovered = JSON.parse(await (await f.request('/mcp', {
+    jsonrpc:'2.0', id:'discover', method:'server/discover', params:{_meta:{
+      'io.modelcontextprotocol/protocolVersion':'2026-07-28',
+      'io.modelcontextprotocol/clientInfo':{name:'reference-check',version:'1'},
+      'io.modelcontextprotocol/clientCapabilities':{},
+    }},
+  })).text());
+  assert.equal(discovered.id, 'discover');
+  assert.equal(discovered.result._meta?.['io.modelcontextprotocol/serverInfo']?.name, 'schedule-my-agents');
+  assert.equal(typeof discovered.result._meta?.['io.modelcontextprotocol/serverInfo']?.version, 'string');
+  assert.equal(discovered.result.serverInfo, undefined);
+  assert.ok(discovered.result.supportedVersions.includes('2026-07-28'));
+  assert.deepEqual(discovered.result.capabilities, {tools:{}, resources:{}, extensions:{'io.modelcontextprotocol/ui':{mimeTypes:[CALENDAR_APP_MIME]}}, events:{}});
+  assert.ok(!JSON.stringify(discovered).includes('personal'));
+  assert.ok(!JSON.stringify(discovered).includes('alice'));
+  const legacy = JSON.parse(await (await f.request('/mcp', {jsonrpc:'2.0',id:2,method:'initialize',params:{protocolVersion:'2025-03-26'}})).text());
+  assert.equal(legacy.result.serverInfo.name, 'schedule-my-agents');
+  assert.equal(legacy.result.protocolVersion, '2025-03-26');
+});
+test('optional calendar entrypoint and resource open read-only and hide private data from discovery', async () => {
+  const f = fixture();
+  await f.env.DB!.prepare("INSERT INTO connections VALUES ('alice','encrypted',0)").run();
+  const catalog = JSON.parse(await (await f.request('/mcp', {id:1,method:'tools/list'})).text());
+  const tool = catalog.result.tools.find((item:{name:string}) => item.name === 'calendar_setup');
+  assert.equal(tool._meta.ui.resourceUri, CALENDAR_APP_URI);
+  assert.deepEqual(tool._meta.ui.visibility, ['app']);
+  assert.deepEqual(tool._meta['openai/ui'].entrypoints, [{type:'global'},{type:'thread'}]);
+  assert.equal(tool.annotations.readOnlyHint, true);
+  assert.equal(tool.inputSchema.additionalProperties, false);
+  assert.ok(!JSON.stringify(catalog).includes('encrypted'));
+  assert.ok(!JSON.stringify(catalog).includes('alice'));
+  const before = f.sql.prepare('SELECT * FROM calendars').all();
+  const call = {id:2,method:'tools/call',params:{name:'calendar_setup',arguments:{}}};
+  const alice = JSON.parse(await (await f.request('/mcp', call)).text()).result;
+  assert.equal(alice.structuredContent.status.connected, true);
+  assert.equal(alice.structuredContent.calendars.length, 2);
+  assert.ok(alice.structuredContent.calendars.every((c:{enabled:boolean}) => !c.enabled));
+  const bob = JSON.parse(await (await f.request('/mcp', call, 'bob')).text()).result;
+  assert.equal(bob.structuredContent.status.connected, false);
+  assert.deepEqual(bob.structuredContent.calendars, []);
+  assert.deepEqual(f.sql.prepare('SELECT * FROM calendars').all(), before);
+  assert.equal(f.channels.length, 0);
+  const resource = JSON.parse(await (await f.request('/mcp',{id:3,method:'resources/read',params:{uri:CALENDAR_APP_URI}})).text()).result.contents[0];
+  assert.equal(resource.mimeType, CALENDAR_APP_MIME);
+  assert.ok(resource.text.startsWith('<!doctype html>'));
+  assert.deepEqual(resource._meta.ui.csp, {connectDomains:[],resourceDomains:[],frameDomains:[],baseUriDomains:[]});
+  assert.equal(resource._meta['openai/ui'].preferredDisplayMode,'fullscreen');
+  assert.ok(!JSON.stringify(resource).includes('alice'));
+  assert.equal(JSON.parse(await (await f.request('/mcp',{id:4,method:'resources/read',params:{uri:'file:///etc/passwd'}})).text()).error.code,-32002);
+});
+test('calendar app actions reuse explicit consent, owner isolation and local revocation', async () => {
+  const f = fixture();
+  await f.env.DB!.prepare("INSERT INTO connections VALUES ('alice','encrypted',0)").run();
+  const action = async (action:string,calendarId?:string,owner='alice') => JSON.parse(await (await f.request('/mcp',{id:1,method:'tools/call',params:{name:'calendar_setup_action',arguments:{action,...(calendarId ? {calendarId} : {})}}},owner)).text()).result;
+  assert.equal((await action('watch','personal')).isError,true);
+  assert.equal(f.channels.length,0);
+  const enabled = await action('enable','personal');
+  assert.equal(enabled.structuredContent.calendars.find((c:{id:string}) => c.id==='personal').enabled,true);
+  assert.equal((await action('watch','personal','bob')).isError,true);
+  assert.equal((await action('enable','invented')).isError,true);
+  assert.ok(!(await action('watch','personal')).isError);
+  assert.equal(f.channels.length,1);
+  await action('disable','personal','bob');
+  assert.equal(f.sql.prepare("SELECT enabled FROM calendars WHERE owner='alice' AND calendar_id='personal'").get()!.enabled,1);
+  assert.ok(!(await action('disable','personal')).isError);
+  assert.equal(f.sql.prepare('SELECT count(*) n FROM events').get()!.n,0);
+  assert.equal((await f.webhook()).status,403);
+  assert.ok(!(await action('disconnect')).isError);
+  assert.equal(f.sql.prepare('SELECT count(*) n FROM connections').get()!.n,0);
+  assert.equal(f.sql.prepare('SELECT count(*) n FROM calendars WHERE enabled=1').get()!.n,0);
+});
+test('MCP tool arguments reject undeclared authority before making changes', async () => {
+  const f=fixture();
+  for (const [name,args] of [['enabled_calendars',{owner:'bob'}],['calendar_setup',{calendarId:'personal'}],['calendar_setup_action',{action:'enable',calendarId:'personal',owner:'bob'}],['calendar_setup_action',{action:'/api/google/connect'}],['calendar_setup_action',{action:'disconnect',calendarId:'personal'}],['calendar_setup_action',{action:'enable'}]] as const) {
+    const result=JSON.parse(await (await f.request('/mcp',{id:1,method:'tools/call',params:{name,arguments:args}})).text()).result;
+    assert.equal(result.isError,true);
+  }
+  assert.equal(f.sql.prepare('SELECT count(*) n FROM calendars').get()!.n,0);
+  assert.equal(f.channels.length,0);
+});
+test('MCP transport returns protocol errors and rejects unavailable HTTP methods', async () => {
+  const f=fixture();
+  const headers={'oai-authenticated-user-id':'alice','content-type':'application/json'};
+  const raw=async (body:string, extra:Record<string,string>={}) => f.service().handle(new Request(f.env.SITE_ORIGIN+'/mcp',{method:'POST',headers:{...headers,...extra},body}));
+  const malformed=await raw('{'); assert.equal(malformed.status,400); assert.equal(JSON.parse(await malformed.text()).error.code,-32700);
+  const invalid=await raw(JSON.stringify({id:1,method:'tools/list'})); assert.equal(invalid.status,400); assert.equal(JSON.parse(await invalid.text()).error.code,-32600);
+  const foreign=await raw(JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'}),{Origin:'https://foreign.example'}); assert.equal(foreign.status,403);
+  const notification=await raw(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})); assert.equal(notification.status,202); assert.equal(await notification.text(),'');
+  const meta={'io.modelcontextprotocol/protocolVersion':'2026-07-28','io.modelcontextprotocol/clientInfo':{name:'test',version:'1'},'io.modelcontextprotocol/clientCapabilities':{}};
+  const unknown=await raw(JSON.stringify({jsonrpc:'2.0',id:'unknown',method:'unknown',params:{_meta:meta}}),{'MCP-Protocol-Version':'2026-07-28','Mcp-Method':'unknown'});
+  assert.equal(unknown.status,404); assert.equal(JSON.parse(await unknown.text()).error.code,-32601);
+  for (const method of ['GET','DELETE']) { const response=await f.service().handle(new Request(f.env.SITE_ORIGIN+'/mcp',{method,headers})); assert.equal(response.status,405); assert.equal(response.headers.get('allow'),'POST'); }
+  const unauthenticated=await f.service().handle(new Request(f.env.SITE_ORIGIN+'/mcp',{method:'POST',body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})})); assert.equal(unauthenticated.status,401);
+});
+test('MCP calendar tool declares read-only behavior and keeps calls scoped to the owner', async () => {
+  const f = fixture();
+  await f.request('/api/calendars/enable', {calendarId:'personal'});
+  const catalog = JSON.parse(await (await f.request('/mcp', {jsonrpc:'2.0',id:1,method:'tools/list'})).text());
+  const tool = catalog.result.tools.find((item: {name:string}) => item.name === 'enabled_calendars');
+  assert.equal(tool.annotations?.readOnlyHint, true);
+  assert.equal(tool.annotations?.destructiveHint, false);
+  assert.equal(tool.annotations?.openWorldHint, false);
+  assert.equal(tool.annotations?.idempotentHint, true);
+  assert.ok(tool.title);
+  const before = f.sql.prepare('SELECT * FROM calendars').all();
+  const call = {jsonrpc:'2.0',id:2,method:'tools/call',params:{name:tool.name,arguments:{}}};
+  const alice = JSON.parse(await (await f.request('/mcp', call)).text());
+  const bob = JSON.parse(await (await f.request('/mcp', call, 'bob')).text());
+  assert.deepEqual(JSON.parse(alice.result.content[0].text), [{calendarId:'personal',summary:'Personal'}]);
+  assert.deepEqual(JSON.parse(bob.result.content[0].text), []);
+  assert.deepEqual(f.sql.prepare('SELECT * FROM calendars').all(), before);
 });
 test('forged, wrong-resource, replayed and expired notifications do not synchronize', async () => {
   const f = fixture(); await f.request('/api/calendars/enable', {calendarId:'personal'}); await f.request('/api/calendars/watch', {calendarId:'personal'});
