@@ -4,7 +4,7 @@ export type SetupSnapshot = { status: SetupStatus; calendars: SetupCalendar[]; s
 export const SETUP_ACTIONS = { disconnect: '/api/google/disconnect', enable: '/api/calendars/enable', disable: '/api/calendars/disable', watch: '/api/calendars/watch', resync: '/api/calendars/resync', unsubscribe: '/api/calendars/unsubscribe' } as const;
 export type SetupAction = keyof typeof SETUP_ACTIONS;
 export type SetupClient = { load(): Promise<SetupSnapshot>; action(path: string, calendarId?: string): Promise<void>; connect?(): Promise<void> };
-export const CALENDAR_APP_URI = 'ui://schedule-my-agents/calendar-settings-v2.html';
+export const CALENDAR_APP_URI = 'ui://schedule-my-agents/calendar-settings-v3.html';
 export const CALENDAR_APP_MIME = 'text/html;profile=mcp-app';
 export const calendarAppTool = {
   name: 'calendar_setup', title: 'Calendar settings', description: 'View your Google connection and calendar permissions. Opening this view does not change consent or create subscriptions.',
