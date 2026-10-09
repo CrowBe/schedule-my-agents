@@ -23,8 +23,9 @@ class Statement {
 }
 const DB={prepare:query=>new Statement(query),async batch(statements){sql.exec('BEGIN');try{for(const statement of statements)await statement.run();sql.exec('COMMIT');}catch(error){sql.exec('ROLLBACK');throw error;}}};
 const env={DB,SITE_ORIGIN:'https://synthetic.chatgpt.site',GOOGLE_CLIENT_ID:'synthetic',GOOGLE_CLIENT_SECRET:'synthetic',TOKEN_ENCRYPTION_KEY:btoa('a'.repeat(32)),GOOGLE_WEBHOOK_VERIFIED:'true'};
+let providerUnavailable=false;
 const service=new CalendarService(env,{calendarAppHtml:html,provider:async()=>({
-  async discoverCalendars(){return [{id:'personal',summary:'Personal (synthetic)',accessRole:'owner'},{id:'work',summary:'Work (synthetic)',accessRole:'reader'},{id:'busy',summary:'Availability only (synthetic)',accessRole:'freeBusyReader'}];},
+  async discoverCalendars(){if(providerUnavailable)throw new Error('Synthetic provider unavailable');return [{id:'personal',summary:'Personal (synthetic)',accessRole:'owner'},{id:'work',summary:'Work (synthetic)',accessRole:'reader'},{id:'busy',summary:'Availability only (synthetic)',accessRole:'freeBusyReader'}];},
   async watchCalendar(calendarId,id,token){return{id,token,resourceId:'synthetic-resource',expiration:Date.now()+86400_000};},
   async stopWatchingCalendar(){}, async syncEvents(){return [];},
 })});
@@ -35,6 +36,7 @@ const server=createServer(async(incoming,outgoing)=>{
       outgoing.setHeader('Content-Type','text/html;charset=utf-8');outgoing.end('<!doctype html><meta charset="utf-8"><title>Calendar app verification</title><style>body{margin:0;font:15px Arial;color:#132a3a;background:#f5f8fc}header{padding:12px;background:#fff;border-bottom:1px solid #d7e0e9}button{padding:8px}iframe{border:0;width:100%;height:1100px}output{display:block;margin:8px 0}</style><header><strong>Local MCP App host · Synthetic data</strong><p>This uses the production UI and CalendarService with a fake provider. No real Google account or live permissions are changed.</p><button id="connect">Complete synthetic Google connection</button><output id="link"></output></header><iframe id="app" title="Calendar settings" sandbox="allow-scripts allow-same-origin"></iframe><script>'+host.outputFiles[0].text.replace(/<\/script/gi,'<\\/script')+'</script>');return;
     }
     if(path==='/fixture/connect' && incoming.method==='POST') {sql.prepare("INSERT OR IGNORE INTO connections VALUES ('alice','synthetic-encrypted-token',0)").run();outgoing.end('{}');return;}
+    if(path==='/fixture/provider-failure' && incoming.method==='POST') {providerUnavailable=true;outgoing.end('{}');return;}
     if(path!== '/mcp' || incoming.method!=='POST') {outgoing.writeHead(404);outgoing.end();return;}
     let body=''; for await(const chunk of incoming)body+=chunk;
     const rpc=JSON.parse(body);

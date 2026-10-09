@@ -112,8 +112,9 @@ test('optional calendar entrypoint and resource open read-only and hide private 
   const catalog = JSON.parse(await (await f.request('/mcp', {id:1,method:'tools/list'})).text());
   const tool = catalog.result.tools.find((item:{name:string}) => item.name === 'calendar_setup');
   assert.equal(tool._meta.ui.resourceUri, CALENDAR_APP_URI);
-  assert.deepEqual(tool._meta.ui.visibility, ['app']);
-  assert.deepEqual(tool._meta['openai/ui'].entrypoints, [{type:'global'},{type:'thread'}]);
+  assert.deepEqual(tool._meta.ui.visibility, ['model','app']);
+  assert.deepEqual(tool._meta['openai/ui'].entrypoints, [{type:'thread'}]);
+  assert.deepEqual(catalog.result.tools.find((item:{name:string}) => item.name === 'calendar_setup_action')._meta.ui.visibility,['app']);
   assert.equal(tool.annotations.readOnlyHint, true);
   assert.equal(tool.annotations.openWorldHint, false);
   assert.equal(tool.inputSchema.additionalProperties, false);
@@ -124,6 +125,9 @@ test('optional calendar entrypoint and resource open read-only and hide private 
   const alice = JSON.parse(await (await f.request('/mcp', call)).text()).result;
   assert.equal(alice.structuredContent, undefined);
   assert.ok(!JSON.stringify(alice.content).includes('Personal'));
+  assert.ok(!JSON.stringify(alice.content).includes('Work'));
+  assert.equal(alice.content[1].type,'resource_link');
+  assert.equal(alice.content[1].uri,f.env.SITE_ORIGIN+'/');
   assert.equal(alice._meta.calendarSetup.status.connected, true);
   assert.equal(alice._meta.calendarSetup.calendars.length, 2);
   assert.ok(alice._meta.calendarSetup.calendars.every((c:{enabled:boolean}) => !c.enabled));
@@ -170,6 +174,22 @@ test('MCP tool arguments reject undeclared authority before making changes', asy
   }
   assert.equal(f.sql.prepare('SELECT count(*) n FROM calendars').get()!.n,0);
   assert.equal(f.channels.length,0);
+});
+test('calendar settings retain disconnect recovery when Google calendar discovery fails', async () => {
+  const f=fixture();
+  await f.env.DB!.prepare("INSERT INTO connections VALUES ('alice','encrypted',0)").run();
+  await f.request('/api/calendars/enable',{calendarId:'personal'});
+  f.provider.discoverCalendars=async()=>{throw new Error('private provider failure details');};
+  const opened=JSON.parse(await (await f.request('/mcp',{id:1,method:'tools/call',params:{name:'calendar_setup',arguments:{}}})).text()).result;
+  assert.ok(!opened.isError);
+  assert.equal(opened._meta.calendarSetup.status.connected,true);
+  assert.deepEqual(opened._meta.calendarSetup.calendars,[]);
+  assert.equal(typeof opened._meta.calendarSetup.calendarError,'string');
+  assert.ok(!JSON.stringify(opened).includes('private provider failure details'));
+  const disconnected=JSON.parse(await (await f.request('/mcp',{id:2,method:'tools/call',params:{name:'calendar_setup_action',arguments:{action:'disconnect'}}})).text()).result;
+  assert.equal(disconnected._meta.calendarSetup.status.connected,false);
+  assert.equal(f.sql.prepare('SELECT count(*) n FROM connections').get()!.n,0);
+  assert.equal(f.sql.prepare('SELECT count(*) n FROM calendars WHERE enabled=1').get()!.n,0);
 });
 test('MCP transport returns protocol errors and rejects unavailable HTTP methods', async () => {
   const f=fixture();

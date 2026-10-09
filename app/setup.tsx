@@ -1,16 +1,19 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import type { SetupCalendar, SetupStatus, SetupSnapshot, SetupClient } from '../lib/calendar/setup-contract';
+import { CALENDAR_LOAD_ERROR } from '../lib/calendar/setup-contract';
 const siteClient: SetupClient = {
   async load() {
     const response = await fetch('/api/status'); const status = await response.json() as SetupStatus & { error?: string };
     if (!response.ok) throw new Error(status.error);
-    let calendars: SetupCalendar[] = [];
+    let calendars: SetupCalendar[] = [], calendarError: string | undefined;
     if (status.connected) {
-      const response = await fetch('/api/calendars'); const result = await response.json() as { calendars: SetupCalendar[]; error?: string };
-      if (!response.ok) throw new Error(result.error); calendars = result.calendars;
+      try {
+        const response = await fetch('/api/calendars'); const result = await response.json() as { calendars: SetupCalendar[]; error?: string };
+        if (!response.ok) throw new Error(result.error); calendars = result.calendars;
+      } catch { calendarError = CALENDAR_LOAD_ERROR; }
     }
-    return { status, calendars, siteUrl: location.origin };
+    return { status, calendars, siteUrl: location.origin, ...(calendarError ? {calendarError} : {}) };
   },
   async action(path, calendarId) {
     const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calendarId }) });
@@ -20,9 +23,9 @@ const siteClient: SetupClient = {
 export default function Home({ client = siteClient, initialSnapshot, embedded = false }: { client?: SetupClient; initialSnapshot?: SetupSnapshot; embedded?: boolean } = {}) {
   const [status, setStatus] = useState<SetupStatus | null>(initialSnapshot?.status ?? null);
   const [calendars, setCalendars] = useState<SetupCalendar[]>(initialSnapshot?.calendars ?? []);
-  const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(initialSnapshot?.calendarError ?? ''); const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
-    const data = await client.load(); setStatus(data.status); setCalendars(data.calendars);
+    const data = await client.load(); setStatus(data.status); setCalendars(data.calendars); setError(data.calendarError ?? '');
   }, [client]);
   useEffect(() => { if (!initialSnapshot) Promise.resolve().then(load).catch(e => setError(e.message)); }, [load, initialSnapshot]);
   async function action(path: string, calendarId?: string) {
@@ -45,7 +48,7 @@ export default function Home({ client = siteClient, initialSnapshot, embedded = 
       <section className="panel"><div className="step">02 / CALENDAR PERMISSION</div><h2>Enable a calendar</h2><p>Every calendar starts disabled. Newly shared calendars stay disabled until you choose them.</p>
         <p className="muted">Renew watches manually before the expiry shown below. If a calendar change is missed, use Resync now; renew an expired watch first.</p>
         {!status?.connected && <div className="empty">Your calendars will appear after you connect Google.</div>}
-        {status?.connected && calendars.length === 0 && <div className="empty">No accessible calendars found.</div>}
+        {status?.connected && calendars.length === 0 && !error && <div className="empty">No accessible calendars found.</div>}
         <ul>{calendars.map(calendar => {
           const watch = status?.watches.find(w => w.calendar_id === calendar.id && w.status === 'active');
           const subscriptions = status?.subscriptions.find(s => s.calendar_id === calendar.id)?.count ?? 0;

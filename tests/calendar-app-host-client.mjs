@@ -16,6 +16,8 @@ bridge.onopenlink=async({url})=>{document.getElementById('link').textContent='Br
 bridge.onsizechange=({height})=>{if(height)iframe.style.height=height+'px';};
 bridge.oninitialized=async()=>{bridge.sendToolInput({arguments:{}});await bridge.sendToolResult(await rpc('tools/call',{name:'calendar_setup',arguments:{}}));};
 document.getElementById('connect').onclick=async()=>{await fetch('/fixture/connect',{method:'POST'});document.getElementById('link').textContent='Synthetic authorization completed. Use Refresh connection in the calendar view.';};
+const failProvider=document.createElement('button');failProvider.textContent='Simulate Google discovery failure';document.querySelector('header').append(failProvider);
+failProvider.onclick=async()=>{await fetch('/fixture/provider-failure',{method:'POST'});document.getElementById('link').textContent='Synthetic provider unavailable. Refresh connection, then verify Disconnect remains available.';};
 async function start() {
   await bridge.connect(new PostMessageTransport(iframe.contentWindow,iframe.contentWindow));
   iframe.srcdoc=(await rpc('resources/read',{uri:CALENDAR_APP_URI})).contents[0].text;
