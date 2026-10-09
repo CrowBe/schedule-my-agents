@@ -231,7 +231,7 @@ export class CalendarService {
     try { parsed = await readMcpMessage(request, this.env.SITE_ORIGIN ? this.origin() : undefined); }
     catch (e) { if (e instanceof McpProtocolError) return mcpErrorResponse(e); throw e; }
     const { rpc, modern } = parsed;
-    const reply = (result: unknown) => json({ jsonrpc: '2.0', id: rpc.id ?? null, result });
+    const reply = (result: object) => json({ jsonrpc: '2.0', id: rpc.id ?? null, result: modern ? { resultType: 'complete', ...result } : result });
     const error = (code: number, message: string, status = 200) => json({ jsonrpc: '2.0', id: rpc.id ?? null, error: { code, message } }, status);
     const capabilities = { tools: {}, resources: {}, extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: [CALENDAR_APP_MIME] } } };
     if (rpc.method === 'server/discover') return reply({ resultType: 'complete', supportedVersions: SUPPORTED_MCP_VERSIONS, capabilities: { ...capabilities, events: {} }, _meta: { 'io.modelcontextprotocol/serverInfo': { name: 'schedule-my-agents', title: 'Schedule my agents', version: '0.1.0' } } });

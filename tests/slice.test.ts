@@ -181,6 +181,18 @@ test('MCP transport returns protocol errors and rejects unavailable HTTP methods
   for (const method of ['GET','DELETE']) { const response=await f.service().handle(new Request(f.env.SITE_ORIGIN+'/mcp',{method,headers})); assert.equal(response.status,405); assert.equal(response.headers.get('allow'),'POST'); }
   const unauthenticated=await f.service().handle(new Request(f.env.SITE_ORIGIN+'/mcp',{method:'POST',body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})})); assert.equal(unauthenticated.status,401);
 });
+test('modern MCP result envelopes declare complete for tools, resources and empty results', async () => {
+  const f=fixture();
+  const meta={'io.modelcontextprotocol/protocolVersion':'2026-07-28','io.modelcontextprotocol/clientInfo':{name:'test',version:'1'},'io.modelcontextprotocol/clientCapabilities':{}};
+  for (const [method,params] of [['tools/list',{}],['tools/call',{name:'calendar_setup',arguments:{}}],['resources/list',{}],['resources/read',{uri:CALENDAR_APP_URI}],['resources/templates/list',{}],['ping',{}],['events/list',{}]] as const) {
+    const response=await f.request('/mcp',{id:1,method,params:{...params,_meta:meta}});
+    assert.equal(response.status,200);
+    const result=JSON.parse(await response.text()).result;
+    assert.equal(result.resultType,'complete',method);
+  }
+  const legacy=JSON.parse(await (await f.request('/mcp',{id:2,method:'tools/list'})).text()).result;
+  assert.equal(legacy.resultType,undefined);
+});
 test('MCP calendar tool declares read-only behavior and keeps calls scoped to the owner', async () => {
   const f = fixture();
   await f.request('/api/calendars/enable', {calendarId:'personal'});

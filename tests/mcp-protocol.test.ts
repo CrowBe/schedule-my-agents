@@ -30,8 +30,12 @@ test('modern protocol enforces version, method and resource/tool name mirroring'
   await rejected(request({meta:{...metadata,'io.modelcontextprotocol/protocolVersion':'2025-03-26'}}),-32020);
   await rejected(request({method:'resources/read',name:'ui://calendar/settings',headers:{'Mcp-Name':'other'}}),-32020);
 });
-test('modern metadata requires valid client identity and object capabilities',async()=>{
+test('modern metadata validates optional client identity and requires object capabilities',async()=>{
   for (const meta of [{...metadata,'io.modelcontextprotocol/clientInfo':null},{...metadata,'io.modelcontextprotocol/clientInfo':{name:'',version:'1'}},{...metadata,'io.modelcontextprotocol/clientCapabilities':[]},{...metadata,'io.modelcontextprotocol/clientCapabilities':undefined}]) await rejected(request({meta}),-32602);
+});
+test('modern clients may omit the recommended client identity',async()=>{
+  const meta={'io.modelcontextprotocol/protocolVersion':version,'io.modelcontextprotocol/clientCapabilities':{}};
+  assert.equal((await readMcpMessage(request({meta}))).modern,true);
 });
 test('MCP name headers accept canonical encoded UTF-8 and reject malformed encodings',async()=>{
   const name='ui://calendar/設定.html';

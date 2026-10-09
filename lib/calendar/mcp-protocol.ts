@@ -35,7 +35,7 @@ export async function readMcpMessage(request: Request, siteOrigin?: string) {
   if (modern) {
     const info = object(meta) ? meta['io.modelcontextprotocol/clientInfo'] : undefined;
     const capabilities = object(meta) ? meta['io.modelcontextprotocol/clientCapabilities'] : undefined;
-    if (!object(info) || typeof info.name !== 'string' || !info.name || typeof info.version !== 'string' || !info.version || !object(capabilities)) throw new McpProtocolError(-32602, 'Client identity and capabilities are required.', 400, id);
+    if ((info !== undefined && (!object(info) || typeof info.name !== 'string' || !info.name || typeof info.version !== 'string' || !info.version)) || !object(capabilities)) throw new McpProtocolError(-32602, 'Valid client metadata and capabilities are required.', 400, id);
     if (rpc.method === 'notifications/initialized') throw new McpProtocolError(-32600, 'Initialization notifications are legacy-only.', 400);
   }
   const method = request.headers.get('Mcp-Method');
