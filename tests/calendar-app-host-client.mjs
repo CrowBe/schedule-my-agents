@@ -1,4 +1,5 @@
 import { AppBridge, PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge';
+import { CALENDAR_APP_URI } from '../lib/calendar/setup-contract.ts';
 const metadata={'io.modelcontextprotocol/protocolVersion':'2026-07-28','io.modelcontextprotocol/clientInfo':{name:'synthetic-browser-host',version:'1'},'io.modelcontextprotocol/clientCapabilities':{}};
 let id=0;
 async function rpc(method,params) {
@@ -17,6 +18,6 @@ bridge.oninitialized=async()=>{bridge.sendToolInput({arguments:{}});await bridge
 document.getElementById('connect').onclick=async()=>{await fetch('/fixture/connect',{method:'POST'});document.getElementById('link').textContent='Synthetic authorization completed. Use Refresh connection in the calendar view.';};
 async function start() {
   await bridge.connect(new PostMessageTransport(iframe.contentWindow,iframe.contentWindow));
-  iframe.srcdoc=(await rpc('resources/read',{uri:'ui://schedule-my-agents/calendar-settings.html'})).contents[0].text;
+  iframe.srcdoc=(await rpc('resources/read',{uri:CALENDAR_APP_URI})).contents[0].text;
 }
 start().catch(error=>{document.getElementById('link').textContent=error.message;});

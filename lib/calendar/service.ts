@@ -280,7 +280,7 @@ export class CalendarService {
           if (!response.ok) return failure(result.error ?? 'Calendars could not be loaded.');
           calendars = result.calendars;
         }
-        return reply({content:[{type:'text',text:'Calendar settings loaded. Connection does not enable any calendar.'}],structuredContent:{status,calendars,siteUrl:this.origin()}});
+        return reply({content:[{type:'text',text:'Calendar settings loaded. Connection does not enable any calendar.'}],_meta:{calendarSetup:{status,calendars,siteUrl:this.origin()}}});
       } catch { return failure('Calendar settings are temporarily unavailable.'); }
     }
     if (rpc.method === 'events/list') {
