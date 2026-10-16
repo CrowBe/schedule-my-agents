@@ -1,13 +1,14 @@
 import { Subscriptions, SubscriptionError, eventDefinition, type CallbackTransport } from './subscriptions.ts';
-import { digest, open, random, seal } from './crypto.ts';
-import { GoogleCalendar, SCOPES, tokenRequest, type Fetch } from './google.ts';
+import { digest, random } from './crypto.ts';
+import { type Fetch } from './google.ts';
+import { resolveConnectedProvider, registeredAdapter, type ProviderAdapters } from './providers.ts';
 import { Store, type WatchRow } from './store.ts';
-import { AppError, type CalendarProvider, type Environment } from './types.ts';
+import { AppError, ProviderFailure, type CalendarProvider, type Environment } from './types.ts';
 import { OccurrenceAlarms } from './alarms.ts';
 import { readMcpMessage, mcpErrorResponse, McpProtocolError, SUPPORTED_MCP_VERSIONS, emptyToolArguments } from './mcp-protocol.ts';
 import { CALENDAR_APP_URI, CALENDAR_APP_MIME, CALENDAR_LOAD_ERROR, calendarAppTool, calendarActionTool, SETUP_ACTIONS, type SetupAction } from './setup-contract.ts';
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
-export type Dependencies = { callbackTransport?: CallbackTransport; calendarAppHtml?: string; http?: Fetch; now?: () => number; provider?: (owner: string) => Promise<CalendarProvider> };
+export type Dependencies = { callbackTransport?: CallbackTransport; calendarAppHtml?: string; http?: Fetch; now?: () => number; provider?: (owner: string) => Promise<CalendarProvider>; providerAdapters?: ProviderAdapters };
 export class CalendarService {
   private store: Store;
   private http: Fetch;
@@ -18,7 +19,12 @@ export class CalendarService {
     this.store = new Store(env.DB); this.http = (input, init) => http(input, init); this.now = dependencies.now ?? Date.now;
     this.alarms = new OccurrenceAlarms(env, this.store, (input, init) => this.http(input, init), this.now, owner => this.provider(owner), dependencies.callbackTransport);
   }
-  private get eventCatalogReady() { return this.env.MCP_EVENTS_READY === 'true' && this.alarms.configured && Boolean(this.dependencies.callbackTransport) && this.env.GOOGLE_WEBHOOK_VERIFIED === 'true'; }
+  private providerAuthorization(providerId:string) {return registeredAdapter(this.env,this.store,this.http,providerId,this.dependencies.providerAdapters)?.authorization?.({env:this.env,store:this.store,http:this.http,now:this.now,origin:()=>this.origin()});}
+  private async ingressReady(owner:string) {
+    const connection=await this.store.connection(owner);
+    return registeredAdapter(this.env,this.store,this.http,connection?.providerId??'google',this.dependencies.providerAdapters)?.ingressVerified===true;
+  }
+  private async eventCatalogReady(owner:string) { return this.env.MCP_EVENTS_READY === 'true' && this.alarms.configured && Boolean(this.dependencies.callbackTransport) && await this.ingressReady(owner); }
   private origin() {
     if (!this.env.SITE_ORIGIN) throw new AppError(503, 'Site origin is not configured.');
     const url = new URL(this.env.SITE_ORIGIN);
@@ -27,11 +33,7 @@ export class CalendarService {
   }
   private async provider(owner: string) {
     if (this.dependencies.provider) return this.dependencies.provider(owner);
-    const connection = await this.store.connection(owner);
-    if (!connection) throw new AppError(409, 'Connect Google first.');
-    const refresh = await open(connection.refresh_token, this.env.TOKEN_ENCRYPTION_KEY, owner);
-    const tokens = await tokenRequest(this.env, { grant_type: 'refresh_token', refresh_token: refresh }, this.http);
-    return new GoogleCalendar(tokens.access_token!, this.http);
+    return resolveConnectedProvider(this.env, this.store, owner, this.http, this.dependencies.providerAdapters);
   }
   private identity(request: Request) {
     // Only trust these when the Sites hosting boundary strips visitor-supplied headers.
@@ -45,29 +47,27 @@ export class CalendarService {
   async handle(request: Request) {
     try {
       const path = new URL(request.url).pathname;
-      if (path === '/api/google/webhook' && request.method === 'POST') return await this.webhook(request);
+      if (path === '/api/google/webhook' && request.method === 'POST') return await this.webhook(request,'google');
+      const providerHook=path.match(/^\/api\/providers\/([a-z][a-z0-9_-]{0,63})\/webhook$/);
+      if (providerHook && request.method === 'POST') return await this.webhook(request,providerHook[1]);
       if (path === '/api/alarms/wake' && request.method === 'POST') return await this.alarms.wake(request);
       const owner = this.identity(request);
       if (path === '/mcp') return request.method === 'POST' ? await this.mcp(request, owner) : new Response(null, {status:405,headers:{Allow:'POST'}});
       if (path === '/api/status' && request.method === 'GET') {
-        return json({ checkedAt: this.now(), connected: Boolean(await this.store.connection(owner)), oauthReady: Boolean(this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET && this.env.TOKEN_ENCRYPTION_KEY && this.env.SITE_ORIGIN),
-          webhookVerified: this.env.GOOGLE_WEBHOOK_VERIFIED === 'true', eventStartReady: this.eventCatalogReady, alarmReady: this.alarms.configured,
+        return json({ checkedAt: this.now(), connected: Boolean(await this.store.connection(owner)), oauthReady: this.providerAuthorization((await this.store.connection(owner))?.providerId??'google')?.configured??false,
+          webhookVerified: await this.ingressReady(owner), eventStartReady: await this.eventCatalogReady(owner), alarmReady: this.alarms.configured,
           dueWork: (await this.store.first<{count: number}>('SELECT count(*) AS count FROM occurrence_outbox WHERE owner = ? AND status = \'pending\'', owner))?.count ?? 0,
           enabled: await this.store.all('SELECT calendar_id, summary FROM calendars WHERE owner = ? AND enabled = 1', owner),
           subscriptions: await this.store.all('SELECT calendar_id, count(*) AS count FROM subscriptions WHERE owner = ? AND expires_at > ? GROUP BY calendar_id', owner, this.now()),
           watches: await this.store.all('SELECT calendar_id, status, expiration, synced_at, sync_failed FROM watches WHERE owner = ? AND status != \'revoked\'', owner) });
       }
-      if (path === '/api/google/connect' && request.method === 'POST') {
-        this.mutation(request);
-        if (!this.env.GOOGLE_CLIENT_ID || !this.env.GOOGLE_CLIENT_SECRET || !this.env.TOKEN_ENCRYPTION_KEY) throw new AppError(503, 'Google OAuth is not configured.');
-        const state = random(), verifier = random() + random();
-        await this.store.run('DELETE FROM oauth_states WHERE expires_at <= ?', this.now());
-        await this.store.run('INSERT INTO oauth_states (state, owner, verifier, expires_at) VALUES (?, ?, ?, ?)', await digest(state), owner, await seal(verifier, this.env.TOKEN_ENCRYPTION_KEY, owner), this.now() + 600_000);
-        const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-        url.search = new URLSearchParams({ client_id: this.env.GOOGLE_CLIENT_ID, redirect_uri: this.origin() + '/api/google/callback', response_type: 'code', scope: SCOPES.join(' '), access_type: 'offline', prompt: 'consent', state, code_challenge: await digest(verifier), code_challenge_method: 'S256' }).toString();
-        return new Response(null, { status: 303, headers: { Location: url.href, 'Cache-Control': 'no-store', 'Set-Cookie': `calendar_oauth=${state}; HttpOnly; Secure; SameSite=Lax; Path=/api/google/callback; Max-Age=600` } });
+      const authorizationRoute=path==='/api/google/connect'?{providerId:'google',action:'connect'}:path==='/api/google/callback'?{providerId:'google',action:'callback'}:(()=>{const match=path.match(/^\/api\/providers\/([a-z][a-z0-9_-]{0,63})\/(connect|callback)$/);return match?{providerId:match[1],action:match[2]}:null;})();
+      if(authorizationRoute && ((authorizationRoute.action==='connect'&&request.method==='POST')||(authorizationRoute.action==='callback'&&request.method==='GET'))) {
+        const authorization=this.providerAuthorization(authorizationRoute.providerId);
+        if(!authorization) throw new AppError(503,'Calendar provider authorization is unavailable.');
+        if(authorizationRoute.action==='connect') {this.mutation(request);return await authorization.start(owner);}
+        return await authorization.complete(owner,request);
       }
-      if (path === '/api/google/callback' && request.method === 'GET') return await this.callback(request, owner);
       if (path === '/api/google/disconnect' && request.method === 'POST') {
         this.mutation(request);
         let provider: CalendarProvider | undefined;
@@ -124,6 +124,7 @@ export class CalendarService {
       }
       throw new AppError(404, 'Route not found.');
     } catch (error) {
+      if(error instanceof ProviderFailure) return Response.json({error:error.message,providerOutcome:error.kind},{status:error.status,headers:{'Cache-Control':'no-store',...(error.kind==='transient'&&error.retryAfter?{'Retry-After':error.retryAfter}:{})}});
       if (error instanceof AppError) return json({ error: error.message }, error.status);
       console.error('calendar_request_failed', { name: error instanceof Error ? error.name : 'unknown' });
       return json({ error: 'The integration is temporarily unavailable. Please retry.' }, 503);
@@ -134,39 +135,26 @@ export class CalendarService {
     if (typeof body.calendarId !== 'string' || !body.calendarId || body.calendarId.length > 1024) throw new AppError(400, 'A calendar ID is required.');
     return body.calendarId;
   }
-  private async callback(request: Request, owner: string) {
-    const params = new URL(request.url).searchParams;
-    const state = params.get('state'), code = params.get('code');
-    const cookie = request.headers.get('cookie')?.split(';').map(s => s.trim()).find(s => s.startsWith('calendar_oauth='))?.slice('calendar_oauth='.length);
-    if (!state || state !== cookie || !code) throw new AppError(400, 'Google authorization was cancelled or invalid.');
-    const pending = await this.store.first<{ verifier: string }>('DELETE FROM oauth_states WHERE state = ? AND owner = ? AND expires_at > ? RETURNING verifier', await digest(state), owner, this.now());
-    if (!pending) throw new AppError(400, 'Google authorization expired or was already used.');
-    // Avoid silently replacing an account while resource grants from another account remain.
-    if (await this.store.connection(owner)) throw new AppError(409, 'This account is already connected. Disconnect before changing Google accounts.');
-    const verifier = await open(pending.verifier, this.env.TOKEN_ENCRYPTION_KEY, owner);
-    const tokens = await tokenRequest(this.env, { grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: this.origin() + '/api/google/callback' }, this.http);
-    if (!tokens.refresh_token || !SCOPES.every(scope => tokens.scope?.split(' ').includes(scope))) throw new AppError(400, 'Both read-only Calendar permissions and offline access are required.');
-    await this.store.run('INSERT INTO connections (owner, refresh_token, created_at) VALUES (?, ?, ?)', owner, await seal(tokens.refresh_token, this.env.TOKEN_ENCRYPTION_KEY, owner), this.now());
-    return new Response(null, { status: 303, headers: { Location: '/', 'Cache-Control': 'no-store', 'Set-Cookie': 'calendar_oauth=; HttpOnly; Secure; SameSite=Lax; Path=/api/google/callback; Max-Age=0' } });
-  }
   private async watch(owner: string, calendarId: string) {
     const calendar = await this.store.requireEnabled(owner, calendarId);
-    if (this.env.GOOGLE_WEBHOOK_VERIFIED !== 'true') throw new AppError(503, 'Google webhook ingress has not been verified for this Site. Calendar consent is saved; watch creation is blocked.');
+    if (!await this.ingressReady(owner)) throw new AppError(503, 'Provider webhook ingress has not been verified for this Site. Calendar consent is saved; watch creation is blocked.');
     const provider = await this.provider(owner);
+    const connection=await this.store.connection(owner),providerId=connection?.providerId??'google';
     const id = random(), token = random() + random(), now = this.now();
     const previous = await this.store.all<WatchRow>("SELECT * FROM watches WHERE owner = ? AND calendar_id = ? AND status = 'active'", owner, calendarId);
-    await this.store.run("INSERT INTO watches (id, owner, calendar_id, generation, token_hash, expiration, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')", id, owner, calendarId, calendar.generation, await digest(token), now + 60_000);
+    await this.store.run("INSERT INTO watches (id, owner, calendar_id, generation, token_hash, expiration, provider_id, connection_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')", id, owner, calendarId, calendar.generation, await digest(token), now + 60_000, providerId, connection?.id??'');
     let created;
     try {
-      created = await provider.watchCalendar(calendarId, id, token, this.origin() + '/api/google/webhook');
+      created = await provider.watchCalendar(calendarId, id, token, this.origin() + (providerId==='google'?'/api/google/webhook':`/api/providers/${providerId}/webhook`));
       await this.store.requireEnabled(owner, calendarId, calendar.generation);
+      if(connection && (await this.store.connection(owner))?.id!==connection.id) throw new AppError(403,'Calendar connection changed during watch creation.');
       await this.store.run("UPDATE watches SET resource_id = ?, expiration = ?, status = 'active' WHERE id = ? AND status = 'pending'", created.resourceId, created.expiration, id);
       const row = await this.store.first<WatchRow>('SELECT * FROM watches WHERE id = ?', id);
       if (row?.status !== 'active') throw new AppError(403, 'Calendar consent was revoked during watch creation.');
       await this.sync(row, provider);
       for (const old of previous) {
         await this.store.run("UPDATE watches SET status = 'revoked' WHERE id = ?", old.id);
-        if (old.resource_id) { try { await provider.stopWatchingCalendar(old.id, old.resource_id); } catch { /* Expiry is retained; local channel is already revoked. */ } }
+        if (old.resource_id && old.provider_id===providerId && (!old.connection_id || old.connection_id===connection?.id)) { try { await provider.stopWatchingCalendar(old.id, old.resource_id); } catch { /* Expiry is retained; local channel is already revoked. */ } }
       }
       return json({ calendarId, watch: { status: 'active', expiration: created.expiration } });
     } catch (error) {
@@ -177,6 +165,8 @@ export class CalendarService {
   }
   private async sync(watch: WatchRow, provider?: CalendarProvider, messageNumber?: string) {
     await this.store.requireEnabled(watch.owner, watch.calendar_id, watch.generation);
+    const connection=await this.store.connection(watch.owner);
+    if((!connection && !this.dependencies.provider) || (connection && (connection.providerId!==watch.provider_id || (watch.connection_id?connection.id!==watch.connection_id:!connection.legacy)))) throw new AppError(403,'Calendar watch connection changed.');
     const lock = await this.store.first<{id: string}>("UPDATE watches SET sync_until = ?, sync_failed = 0 WHERE id = ? AND sync_until <= ? AND status = 'active' RETURNING id", this.now() + 180_000, watch.id, this.now());
     if (!lock) {
       // Preserve a recovery warning even when the in-flight fetch later succeeds.
@@ -184,13 +174,23 @@ export class CalendarService {
       throw new AppError(503, 'Calendar synchronization is already in progress. Use Resync now after it completes.');
     }
     try {
+      // A notification can wait behind a newer sync after its initial read.
+      // Ordering and cursor persistence both belong inside the sync lock.
+      if (messageNumber) {
+        const latest = await this.store.first<WatchRow>('SELECT * FROM watches WHERE id = ?', watch.id);
+        const adapter = registeredAdapter(this.env, this.store, this.http, watch.provider_id, this.dependencies.providerAdapters);
+        if (!latest || !adapter?.isNewer(messageNumber, latest.last_message)) return;
+      }
       const calendarProvider = provider ?? await this.provider(watch.owner);
       const events = await calendarProvider.syncEvents(watch.calendar_id, this.now());
-      await this.store.replaceEvents(watch, events, this.now());
+      if(connection && (await this.store.connection(watch.owner))?.id!==connection.id) throw new AppError(403,'Calendar connection changed during synchronization.');
+      await this.store.replaceEvents(watch, events, this.now(), connection);
       await this.store.requireEnabled(watch.owner, watch.calendar_id, watch.generation);
       const current = await this.store.first<WatchRow>('SELECT * FROM watches WHERE id = ?', watch.id);
       if (current?.status !== 'active' || current.expiration <= this.now()) throw new AppError(409, 'Watch expired or was revoked during synchronization.');
+      if(connection && (await this.store.connection(watch.owner))?.id!==connection.id) throw new AppError(403,'Calendar connection changed during synchronization.');
       await this.alarms.seed(watch.owner, watch.calendar_id, watch.generation, calendarProvider, { channelTag: (await digest(watch.id)).slice(0, 12), ...(messageNumber ? { messageNumber } : {}) });
+      if (messageNumber) await this.store.run('UPDATE watches SET last_message = ? WHERE id = ?', messageNumber, watch.id);
       console.info('calendar_snapshot_synced', { channelTag: (await digest(watch.id)).slice(0, 12), occurrences: events.length });
     } catch (error) {
       await this.store.run('UPDATE watches SET sync_failed = 1 WHERE id = ?', watch.id);
@@ -199,30 +199,34 @@ export class CalendarService {
       await this.store.run('UPDATE watches SET sync_until = 0 WHERE id = ?', watch.id);
     }
   }
-  private async webhook(request: Request) {
-    const id = request.headers.get('x-goog-channel-id'), token = request.headers.get('x-goog-channel-token');
-    const resource = request.headers.get('x-goog-resource-id'), state = request.headers.get('x-goog-resource-state'), number = request.headers.get('x-goog-message-number');
-    if (!id || !token || !resource || !number || !/^\d{1,30}$/.test(number) || !['sync', 'exists', 'not_exists'].includes(state ?? '')) throw new AppError(400, 'Invalid Google notification headers.');
+  private async webhook(request: Request,providerId:string) {
+    const adapter=registeredAdapter(this.env,this.store,this.http,providerId,this.dependencies.providerAdapters);
+    if(!adapter) throw new AppError(404,'Calendar provider is unavailable.');
+    const change=await adapter.readChange(request);
+    const {watchId:id,token,resourceId:resource,cursor:number,state}=change;
+    if(![id,token,resource,number].every(value=>typeof value==='string'&&value.length>0&&value.length<=1024)||!['initial','changed','removed'].includes(state)) throw new AppError(400,'Invalid provider change notification.');
     const watch = await this.store.first<WatchRow>('SELECT * FROM watches WHERE id = ?', id);
     if (!watch || watch.token_hash !== await digest(token) || watch.expiration <= this.now() || !['active', 'pending'].includes(watch.status)) throw new AppError(403, 'Notification channel is not authorized.');
     await this.store.requireEnabled(watch.owner, watch.calendar_id, watch.generation);
     // Google can send initial sync before events.watch returns its resource ID.
-    if (watch.status === 'pending' && state === 'sync') {
+    const connection=await this.store.connection(watch.owner);
+    if(watch.provider_id!==providerId || (connection && (connection.providerId!==providerId || (watch.connection_id?connection.id!==watch.connection_id:!connection.legacy)))) throw new AppError(403,'Notification provider or connection does not match the watch.');
+    if(!connection && !this.dependencies.provider) throw new AppError(403,'Calendar connection was revoked.');
+    if (watch.status === 'pending' && state === 'initial') {
       console.info('calendar_notification', { channelTag: (await digest(id)).slice(0, 12), state, messageNumber: number, outcome: 'pending-initial' });
       return new Response(null, { status: 204 });
     }
     if (watch.resource_id !== resource || watch.status !== 'active') throw new AppError(403, 'Notification resource does not match.');
     // Initial notifications carry no event changes; watch creation owns the bootstrap fetch.
-    if (state === 'sync') {
+    if (state === 'initial') {
       console.info('calendar_notification', { channelTag: (await digest(id)).slice(0, 12), state, messageNumber: number, outcome: 'active-initial' });
       return new Response(null, { status: 204 });
     }
-    if (watch.last_message && BigInt(number) <= BigInt(watch.last_message)) return new Response(null, { status: 204 });
+    if (!adapter.isNewer(number,watch.last_message)) return new Response(null, { status: 204 });
     try { await this.sync(watch, undefined, number); } catch (error) {
       if (error instanceof AppError && error.status === 403) await this.store.revoke(watch.owner, watch.calendar_id, random());
       throw error;
     }
-    await this.store.run('UPDATE watches SET last_message = ? WHERE id = ?', number, id);
     console.info('calendar_notification', { channelTag: (await digest(id)).slice(0, 12), state, messageNumber: number, outcome: 'synchronized' });
     return new Response(null, { status: 204 });
   }
@@ -280,7 +284,7 @@ export class CalendarService {
       } catch { return failure('Calendar settings are temporarily unavailable.'); }
     }
     if (rpc.method === 'events/list') {
-      const ready = this.eventCatalogReady;
+      const ready = await this.eventCatalogReady(owner);
       const grant = ready && await this.store.connection(owner) && await this.store.first('SELECT calendar_id FROM calendars WHERE owner = ? AND enabled = 1 LIMIT 1', owner);
       return reply({ events: grant ? [eventDefinition] : [] });
     }
