@@ -91,9 +91,11 @@ for (const kind of ['google', 'opaque'] as const) {
   }};
   const delayed=notify('5');await captured.promise;
   assert.equal((await notify('6')).status,204);const afterNewer=f.jobs.length;
+  await f.store.run('UPDATE watches SET sync_failed = 1');
   resume.resolve();assert.equal((await delayed).status,204);
   assert.equal((await f.store.first<{last_message:string}>('SELECT last_message FROM watches'))?.last_message,'6');
   assert.equal(f.jobs.length,afterNewer,'ordering is checked again under the lock');
+  assert.equal((await f.store.first<{sync_failed:number}>('SELECT sync_failed FROM watches'))?.sync_failed,1,'skipped stale notifications preserve a recovery warning');
   const fetching=Promise.withResolvers<void>(), finish=Promise.withResolvers<void>();
   const sync=f.provider.syncEvents.bind(f.provider);let hold=true;
   f.provider.syncEvents=async(...args)=>{

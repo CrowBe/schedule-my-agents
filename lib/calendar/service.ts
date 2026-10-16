@@ -168,7 +168,7 @@ export class CalendarService {
     const connection=await this.store.connection(watch.owner);
     if((!connection && !this.dependencies.provider) || (connection && (connection.providerId!==watch.provider_id || (watch.connection_id?connection.id!==watch.connection_id:!connection.legacy)))) throw new AppError(403,'Calendar watch connection changed.');
     const lockUntil = this.now() + 180_000;
-    const lock = await this.store.first<{id: string}>("UPDATE watches SET sync_until = ?, sync_failed = 0 WHERE id = ? AND sync_until <= ? AND status = 'active' RETURNING id", lockUntil, watch.id, this.now());
+    const lock = await this.store.first<{id: string}>("UPDATE watches SET sync_until = ? WHERE id = ? AND sync_until <= ? AND status = 'active' RETURNING id", lockUntil, watch.id, this.now());
     if (!lock) {
       // Preserve a recovery warning even when the in-flight fetch later succeeds.
       await this.store.run("UPDATE watches SET sync_failed = 2 WHERE id = ? AND status = 'active'", watch.id);
@@ -188,6 +188,7 @@ export class CalendarService {
         const adapter = registeredAdapter(this.env, this.store, this.http, watch.provider_id, this.dependencies.providerAdapters);
         if (!latest || !adapter?.isNewer(messageNumber, latest.last_message)) return;
       }
+      await this.store.run('UPDATE watches SET sync_failed = 0 WHERE id = ? AND sync_until = ?', watch.id, lockUntil);
       const calendarProvider = provider ?? await this.provider(watch.owner);
       const events = await calendarProvider.syncEvents(watch.calendar_id, this.now());
       if(connection && (await this.store.connection(watch.owner))?.id!==connection.id) throw new AppError(403,'Calendar connection changed during synchronization.');
