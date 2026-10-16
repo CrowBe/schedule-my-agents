@@ -94,5 +94,30 @@ for (const kind of ['google', 'opaque'] as const) {
   resume.resolve();assert.equal((await delayed).status,204);
   assert.equal((await f.store.first<{last_message:string}>('SELECT last_message FROM watches'))?.last_message,'6');
   assert.equal(f.jobs.length,afterNewer,'ordering is checked again under the lock');
+  const fetching=Promise.withResolvers<void>(), finish=Promise.withResolvers<void>();
+  const sync=f.provider.syncEvents.bind(f.provider);let hold=true;
+  f.provider.syncEvents=async(...args)=>{
+   const events=await sync(...args);
+   if(hold){hold=false;fetching.resolve();await finish.promise;}
+   return events;
+  };
+  const expired=notify('7');await fetching.promise;
+  f.setNow(f.now()+180_001);f.edit({title:'Newer snapshot',when:new Date(f.now()+60000).toISOString()});
+  const saving=Promise.withResolvers<void>(), saved=Promise.withResolvers<void>();
+  const latestPrepare=f.env.DB!.prepare.bind(f.env.DB);
+  f.env.DB={...f.DB,prepare(query){
+   const statement=latestPrepare(query),bind=statement.bind.bind(statement),run=statement.run.bind(statement);let cursor:unknown;
+   statement.bind=(...values:unknown[])=>{cursor=values[0];return bind(...values);};
+   statement.run=async()=>{if(query.startsWith('UPDATE watches SET last_message')&&cursor==='8'){saving.resolve();await saved.promise;}return run();};
+   return statement;
+  }};
+  const newer=notify('8');await saving.promise;
+  const snapshot=await f.store.all('SELECT * FROM events');
+  const lease=await f.store.first('SELECT sync_until,sync_failed FROM watches');
+  finish.resolve();assert.equal((await expired).status,503);
+  assert.deepEqual(await f.store.first('SELECT sync_until,sync_failed FROM watches'),lease,'expired sync cannot release or mark its successor failed');
+  saved.resolve();assert.equal((await newer).status,204);
+  assert.equal((await f.store.first<{last_message:string}>('SELECT last_message FROM watches'))?.last_message,'8');
+  assert.deepEqual(await f.store.all('SELECT * FROM events'),snapshot,'expired sync cannot replace a newer snapshot');
  });
 }

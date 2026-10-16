@@ -51,11 +51,11 @@ export class Store {
       this.statement('DELETE FROM occurrence_outbox WHERE owner = ? AND calendar_id = ?', owner, id),
     ]);
   }
-  async replaceEvents(watch: WatchRow, events: CalendarEvent[], now: number, connection?:CalendarConnection|null) {
+  async replaceEvents(watch: WatchRow, events: CalendarEvent[], now: number, connection?:CalendarConnection|null, syncUntil?:number) {
     // Generation and channel checks guard commits after consent revocation/renewal.
-    const guard = `EXISTS (SELECT 1 FROM calendars c JOIN watches w ON w.owner = c.owner AND w.calendar_id = c.calendar_id WHERE c.owner = ? AND c.calendar_id = ? AND c.enabled = 1 AND c.generation = ? AND w.id = ? AND w.status = 'active' AND w.expiration > ?)` +
+    const guard = `EXISTS (SELECT 1 FROM calendars c JOIN watches w ON w.owner = c.owner AND w.calendar_id = c.calendar_id WHERE c.owner = ? AND c.calendar_id = ? AND c.enabled = 1 AND c.generation = ? AND w.id = ? AND w.status = 'active' AND w.expiration > ?${syncUntil === undefined ? '' : ' AND w.sync_until = ? AND w.sync_until > ?'})` +
       (connection ? ` AND EXISTS (SELECT 1 FROM connections WHERE owner = ? AND provider_id = ? AND CASE WHEN connection_id = '' THEN 'legacy:' || provider_id || ':' || owner || ':' || created_at ELSE connection_id END = ?)` : '');
-    const args = [watch.owner, watch.calendar_id, watch.generation, watch.id, now,...(connection?[connection.owner,connection.providerId,connection.id]:[])];
+    const args = [watch.owner, watch.calendar_id, watch.generation, watch.id, now,...(syncUntil === undefined ? [] : [syncUntil, now]),...(connection?[connection.owner,connection.providerId,connection.id]:[])];
     await this.db!.batch([
       this.statement(`DELETE FROM events WHERE owner = ? AND calendar_id = ? AND ${guard}`, watch.owner, watch.calendar_id, ...args),
       ...events.map(event => this.statement(`INSERT OR REPLACE INTO events (owner, calendar_id, provider_event_id, payload) SELECT ?, ?, ?, ? WHERE ${guard}`, watch.owner, watch.calendar_id, event.providerEventId, JSON.stringify(event), ...args)),

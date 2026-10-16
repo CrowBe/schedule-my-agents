@@ -167,12 +167,19 @@ export class CalendarService {
     await this.store.requireEnabled(watch.owner, watch.calendar_id, watch.generation);
     const connection=await this.store.connection(watch.owner);
     if((!connection && !this.dependencies.provider) || (connection && (connection.providerId!==watch.provider_id || (watch.connection_id?connection.id!==watch.connection_id:!connection.legacy)))) throw new AppError(403,'Calendar watch connection changed.');
-    const lock = await this.store.first<{id: string}>("UPDATE watches SET sync_until = ?, sync_failed = 0 WHERE id = ? AND sync_until <= ? AND status = 'active' RETURNING id", this.now() + 180_000, watch.id, this.now());
+    const lockUntil = this.now() + 180_000;
+    const lock = await this.store.first<{id: string}>("UPDATE watches SET sync_until = ?, sync_failed = 0 WHERE id = ? AND sync_until <= ? AND status = 'active' RETURNING id", lockUntil, watch.id, this.now());
     if (!lock) {
       // Preserve a recovery warning even when the in-flight fetch later succeeds.
       await this.store.run("UPDATE watches SET sync_failed = 2 WHERE id = ? AND status = 'active'", watch.id);
       throw new AppError(503, 'Calendar synchronization is already in progress. Use Resync now after it completes.');
     }
+    const requireLock = async () => {
+      await this.store.requireEnabled(watch.owner, watch.calendar_id, watch.generation);
+      if (!await this.store.first("SELECT id FROM watches WHERE id = ? AND sync_until = ? AND sync_until > ? AND status = 'active'", watch.id, lockUntil, this.now())) {
+        throw new AppError(503, 'Calendar synchronization lease expired. Use Resync now to recover.');
+      }
+    };
     try {
       // A notification can wait behind a newer sync after its initial read.
       // Ordering and cursor persistence both belong inside the sync lock.
@@ -184,19 +191,22 @@ export class CalendarService {
       const calendarProvider = provider ?? await this.provider(watch.owner);
       const events = await calendarProvider.syncEvents(watch.calendar_id, this.now());
       if(connection && (await this.store.connection(watch.owner))?.id!==connection.id) throw new AppError(403,'Calendar connection changed during synchronization.');
-      await this.store.replaceEvents(watch, events, this.now(), connection);
+      await requireLock();
+      await this.store.replaceEvents(watch, events, this.now(), connection, lockUntil);
       await this.store.requireEnabled(watch.owner, watch.calendar_id, watch.generation);
       const current = await this.store.first<WatchRow>('SELECT * FROM watches WHERE id = ?', watch.id);
       if (current?.status !== 'active' || current.expiration <= this.now()) throw new AppError(409, 'Watch expired or was revoked during synchronization.');
       if(connection && (await this.store.connection(watch.owner))?.id!==connection.id) throw new AppError(403,'Calendar connection changed during synchronization.');
+      await requireLock();
       await this.alarms.seed(watch.owner, watch.calendar_id, watch.generation, calendarProvider, { channelTag: (await digest(watch.id)).slice(0, 12), ...(messageNumber ? { messageNumber } : {}) });
-      if (messageNumber) await this.store.run('UPDATE watches SET last_message = ? WHERE id = ?', messageNumber, watch.id);
+      if (messageNumber) await this.store.run('UPDATE watches SET last_message = ? WHERE id = ? AND sync_until = ? AND sync_until > ?', messageNumber, watch.id, lockUntil, this.now());
+      await requireLock();
       console.info('calendar_snapshot_synced', { channelTag: (await digest(watch.id)).slice(0, 12), occurrences: events.length });
     } catch (error) {
-      await this.store.run('UPDATE watches SET sync_failed = 1 WHERE id = ?', watch.id);
+      await this.store.run('UPDATE watches SET sync_failed = 1 WHERE id = ? AND sync_until = ?', watch.id, lockUntil);
       throw error;
     } finally {
-      await this.store.run('UPDATE watches SET sync_until = 0 WHERE id = ?', watch.id);
+      await this.store.run('UPDATE watches SET sync_until = 0 WHERE id = ? AND sync_until = ?', watch.id, lockUntil);
     }
   }
   private async webhook(request: Request,providerId:string) {
