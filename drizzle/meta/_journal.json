@@ -43,6 +43,27 @@
       "when": 1791277653407,
       "tag": "0005_wooden_hitman",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791853294663,
+      "tag": "0006_provider_connections",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1791853539096,
+      "tag": "0007_occurrence_connections",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1791854271679,
+      "tag": "0008_watch_connections",
+      "breakpoints": true
     }
   ]
 }

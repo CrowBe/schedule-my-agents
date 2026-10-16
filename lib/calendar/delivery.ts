@@ -9,8 +9,8 @@ export function serializeOccurrence(eventId: string, occurrence: CalendarEvent) 
   }
   const data = {
     calendarId: occurrence.calendarId, eventId: occurrence.providerEventId,
-    start: occurrence.start,
-    ...(occurrence.end !== undefined ? { end: occurrence.end } : {}),
+    start: new Date(occurrence.start).toISOString(),
+    ...(occurrence.end !== undefined ? { end: new Date(occurrence.end).toISOString() } : {}),
     ...(occurrence.title !== undefined ? { title: occurrence.title } : {}),
     ...(occurrence.description !== undefined ? { description: occurrence.description } : {}),
   };
@@ -35,20 +35,47 @@ export function deliveryOutcome(status: number): 'accepted' | 'terminal' | 'retr
   return 'retry';
 }
 
+/** Equal jitter keeps a positive delay; receiver hints are a minimum, never a new lifetime. */
+export function retryDelay(attempt: number, now: number, hint: string | null, random: () => number = Math.random) {
+  const base = Math.min(60_000, 2000 * 2 ** Math.min(Math.max(0, attempt - 1), 5));
+  const sample = random();
+  const jitter = Math.floor(base / 2 + base / 2 * (Number.isFinite(sample) ? Math.max(0, Math.min(1, sample)) : 1));
+  let delay = 0;
+  if (hint && hint.length <= 128) {
+    if (/^\d+$/.test(hint)) delay = Number(hint) * 1000;
+    else if (/^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(hint)) {
+      const parsed = Date.parse(hint);
+      if (Number.isFinite(parsed) && new Date(parsed).toUTCString() === hint) delay = parsed - now;
+    }
+  }
+  return Math.max(jitter, Number.isNaN(delay) ? 0 : delay);
+}
+
 // The original opaque alarm remains unacknowledged while work needs recovery.
 // Its durable retries drive this ledger; no additional scheduler is introduced.
 import { Subscriptions, type CallbackTransport } from './subscriptions.ts';
 import { digest, open, random } from './crypto.ts';
 import { Store } from './store.ts';
 import { AppError, type Environment } from './types.ts';
-type Receipt = { id: string; owner: string; calendar_id: string; generation: string; payload: string; expires_at: number; status: string };
+type Receipt = { id: string; owner: string; calendar_id: string; generation: string; payload: string; expires_at: number; status: string; provider_id:string; connection_id:string };
 type Delivery = { subscription_id: string; body: string; attempts: number; lease: string };
 const MAX_ATTEMPTS = 6;
 export class Deliveries {
-  constructor(private store: Store, private env: Environment, private now: () => number, private transport?: CallbackTransport) {}
+  constructor(private store: Store, private env: Environment, private now: () => number, private transport?: CallbackTransport, private random: () => number = Math.random) {}
   async dispatch(id: string, current: CalendarEvent) {
     const receipt = await this.store.first<Receipt>('SELECT * FROM occurrence_outbox WHERE id = ?', id);
     if (!receipt || receipt.status === 'terminal') return;
+    const connected = async () => {
+      const connection = await this.store.connection(receipt.owner);
+      return connection && connection.providerId === receipt.provider_id &&
+        (receipt.connection_id ? connection.id === receipt.connection_id : connection.legacy);
+    };
+    if (!await connected() || current.provider !== receipt.provider_id) {
+      await this.store.batch([
+        this.store.statement("UPDATE occurrence_outbox SET status = 'terminal', payload = '' WHERE id = ?", id),
+        this.store.statement("UPDATE deliveries SET status = 'terminal', body = '' WHERE outbox_id = ? AND status = 'pending'", id),
+      ]); return;
+    }
     if (receipt.expires_at < this.now()) {
       await this.store.run("UPDATE deliveries SET status = 'exhausted', body = '' WHERE outbox_id = ? AND status = 'pending'", id);
       return;
@@ -86,7 +113,7 @@ export class Deliveries {
         AND EXISTS (SELECT 1 FROM occurrence_outbox WHERE id = ? AND expires_at >= ?)
         RETURNING subscription_id, body, attempts, lease`, lease, now + 15_000, id, row.subscription_id, now, now, MAX_ATTEMPTS, id, now);
       if (!delivery) continue;
-      let outcome: 'accepted' | 'terminal' | 'retry' = 'terminal', status: number | null = null;
+      let outcome: 'accepted' | 'terminal' | 'retry' = 'terminal', status: number | null = null, retryAfter: string | null = null;
       const subscription = await subscriptions.active(row.subscription_id, receipt.owner);
       if (subscription && subscription.generation === receipt.generation && subscription.calendar_id === receipt.calendar_id && subscription.verified_at > 0) {
         if (!this.transport) throw new AppError(503, 'Callback transport is unavailable.');
@@ -98,7 +125,7 @@ export class Deliveries {
           // Recheck after asynchronous crypto and immediately before the network effect.
           const active = await subscriptions.active(subscription.id, receipt.owner);
           const owned = await this.store.first<{lease: string}>("SELECT lease FROM deliveries WHERE outbox_id = ? AND subscription_id = ? AND lease = ? AND status = 'pending'", id, subscription.id, lease);
-          if (active?.revision === subscription.revision && owned) {
+          if (active?.revision === subscription.revision && owned && await connected()) {
             // Preparation consumes the lease too. Stop the network effect before
             // another worker can reclaim it, leaving a second for cancellation.
             const budget = Math.min(10_000, now + 14_000 - this.now(), receipt.expires_at - this.now());
@@ -109,15 +136,18 @@ export class Deliveries {
             try {
               const response = await Promise.race([this.transport.post(subscription.callback_url, delivery.body, headers, signal, 'status'), timeout]);
               status = response.status; outcome = response.redirected ? 'terminal' : deliveryOutcome(status);
+              retryAfter = response.headers.get('Retry-After');
               void response.body?.cancel().catch(() => {});
             } finally { signal.removeEventListener('abort', abort); }
           } else if (active && active.revision !== subscription.revision) outcome = 'retry';
         } catch { outcome = 'retry'; }
       }
-      const final = outcome === 'retry' ? (delivery.attempts >= MAX_ATTEMPTS || this.now() >= receipt.expires_at ? 'exhausted' : 'pending') : outcome;
+      const completedAt = this.now();
+      const delay = outcome === 'retry' ? retryDelay(delivery.attempts, completedAt, retryAfter, this.random) : 0;
+      const final = outcome === 'retry' ? (delivery.attempts >= MAX_ATTEMPTS || completedAt + delay >= receipt.expires_at ? 'exhausted' : 'pending') : outcome;
       await this.store.run(`UPDATE deliveries SET status = ?, last_status = ?, next_at = ?, lease = NULL, lease_until = 0,
         body = CASE WHEN ? = 'pending' THEN body ELSE '' END WHERE outbox_id = ? AND subscription_id = ? AND lease = ?`,
-        final, status, this.now() + Math.min(60_000, 2000 * 2 ** (delivery.attempts - 1)), final, id, row.subscription_id, lease);
+        final, status, Math.min(receipt.expires_at, completedAt + delay), final, id, row.subscription_id, lease);
       console.info('calendar_delivery', { eventTag: id.slice(0,12), subscriptionTag: (await digest(row.subscription_id)).slice(0,12), outcome: final, attempt: delivery.attempts, status });
     }
     const pending = await this.store.first<{n: number}>("SELECT count(*) n FROM deliveries WHERE outbox_id = ? AND status = 'pending'", id);

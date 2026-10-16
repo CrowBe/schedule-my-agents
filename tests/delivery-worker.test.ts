@@ -28,7 +28,7 @@ test('Workers/D1 revocation races during provider revalidation prevent signed di
     }});
     try {
       const db=await mf.getD1Database('DB');for(const file of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())for(const sql of readFileSync('drizzle/'+file,'utf8').split('--> statement-breakpoint').filter(s=>s.trim()))await db.prepare(sql).run();
-      await db.prepare('INSERT INTO connections VALUES (?, ?, ?)').bind('alice',await seal('refresh',encryption,'alice'),Date.now()).run();
+      await db.prepare('INSERT INTO connections (owner,refresh_token,created_at) VALUES (?, ?, ?)').bind('alice',await seal('refresh',encryption,'alice'),Date.now()).run();
       await db.prepare("INSERT INTO calendars VALUES ('alice','personal','Personal',1,'g1')").run();
       await db.prepare("INSERT INTO watches (id,owner,calendar_id,generation,token_hash,resource_id,expiration,status) VALUES ('watch','alice','personal','g1','hash','resource',?,'active')").bind(Date.now()+3600_000).run();
       const params={name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example/callback',secret:'whsec_'+btoa('s'.repeat(32))}};

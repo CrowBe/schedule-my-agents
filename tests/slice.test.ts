@@ -108,7 +108,7 @@ test('MCP discovery publishes modern server identity without exposing account da
 });
 test('optional calendar entrypoint and resource open read-only and hide private data from discovery', async () => {
   const f = fixture();
-  await f.env.DB!.prepare("INSERT INTO connections VALUES ('alice','encrypted',0)").run();
+  await f.env.DB!.prepare("INSERT INTO connections (owner,refresh_token,created_at) VALUES ('alice','encrypted',0)").run();
   const catalog = JSON.parse(await (await f.request('/mcp', {id:1,method:'tools/list'})).text());
   const tool = catalog.result.tools.find((item:{name:string}) => item.name === 'calendar_setup');
   assert.equal(tool._meta.ui.resourceUri, CALENDAR_APP_URI);
@@ -146,7 +146,7 @@ test('optional calendar entrypoint and resource open read-only and hide private 
 });
 test('calendar app actions reuse explicit consent, owner isolation and local revocation', async () => {
   const f = fixture();
-  await f.env.DB!.prepare("INSERT INTO connections VALUES ('alice','encrypted',0)").run();
+  await f.env.DB!.prepare("INSERT INTO connections (owner,refresh_token,created_at) VALUES ('alice','encrypted',0)").run();
   const action = async (action:string,calendarId?:string,owner='alice') => JSON.parse(await (await f.request('/mcp',{id:1,method:'tools/call',params:{name:'calendar_setup_action',arguments:{action,...(calendarId ? {calendarId} : {})}}},owner)).text()).result;
   assert.equal((await action('watch','personal')).isError,true);
   assert.equal(f.channels.length,0);
@@ -177,7 +177,7 @@ test('MCP tool arguments reject undeclared authority before making changes', asy
 });
 test('calendar settings retain disconnect recovery when Google calendar discovery fails', async () => {
   const f=fixture();
-  await f.env.DB!.prepare("INSERT INTO connections VALUES ('alice','encrypted',0)").run();
+  await f.env.DB!.prepare("INSERT INTO connections (owner,refresh_token,created_at) VALUES ('alice','encrypted',0)").run();
   await f.request('/api/calendars/enable',{calendarId:'personal'});
   f.provider.discoverCalendars=async()=>{throw new Error('private provider failure details');};
   const opened=JSON.parse(await (await f.request('/mcp',{id:1,method:'tools/call',params:{name:'calendar_setup',arguments:{}}})).text()).result;
@@ -275,7 +275,7 @@ test('unverified hosted ingress and event-start delivery fail closed', async () 
   const f = fixture(); f.env.GOOGLE_WEBHOOK_VERIFIED = 'false'; await f.request('/api/calendars/enable', {calendarId:'personal'});
   assert.equal((await f.request('/api/calendars/watch', {calendarId:'personal'})).status, 503); assert.equal(f.channels.length,0);
   const events = JSON.parse(await (await f.request('/mcp', {id:1,method:'events/list'})).text()); assert.deepEqual(events.result.events, []);
-  await f.env.DB!.prepare("INSERT INTO connections VALUES ('alice','encrypted',0)").run();
+  await f.env.DB!.prepare("INSERT INTO connections (owner,refresh_token,created_at) VALUES ('alice','encrypted',0)").run();
   const subscribed = JSON.parse(await (await f.request('/mcp', {id:2,method:'events/subscribe',params:{name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example.com/callback',secret:'whsec_'+btoa('s'.repeat(32))}}})).text()); assert.equal(subscribed.error.code,-32015); assert.equal(subscribed.error.data.reason,'transport_unavailable');
 });
 test('CSRF and missing identity are rejected', async () => {
