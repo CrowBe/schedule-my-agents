@@ -27,7 +27,7 @@ function fixture() {
   let now = Date.parse('2026-10-06T23:00:00Z');
   let event: CalendarEvent | null = normalize('private-calendar', { id: 'private-event', summary: 'Secret appointment', start: { dateTime: new Date(now + 60_000).toISOString() } })!;
   const store = new Store(DB);
-  sql.prepare('INSERT INTO connections VALUES (?, ?, ?)').run('private-owner', 'encrypted-refresh', now);
+  sql.prepare('INSERT INTO connections (owner,refresh_token,created_at) VALUES (?, ?, ?)').run('private-owner', 'encrypted-refresh', now);
   sql.prepare('INSERT INTO calendars VALUES (?, ?, ?, 1, ?)').run('private-owner', 'private-calendar', 'Personal', 'grant-1');
   const jobs: AlarmJob[] = []; let failure = false; let lookupHook = async () => {};
   let next: CalendarEvent | null = null; let successors = 0;
@@ -67,10 +67,10 @@ test('encrypted alarm → live revalidation → restart/concurrent deduplicated 
 });
 
 test('series moves 10 → noon: stale alarm does not advance; valid noon alarm registers only next instance', async () => {
-  const f = fixture(); f.setEvent({ ...f.event, recurringEventId: 'private-series', originalStartTime: f.event.start });
+  const f = fixture(); f.setEvent({ ...f.event, seriesId: 'private-series', recurrenceId: f.event.start });
   const old = await f.register(); const moved = { ...f.event, start: new Date(old.dueAt + 2 * 3600_000).toISOString() };
   f.setEvent(moved); const fresh = await f.register(); assert.notEqual(old.id, fresh.id);
-  f.setNext({ ...moved, providerEventId: 'following-instance', originalStartTime: new Date(fresh.dueAt + 7 * 86400_000).toISOString(), start: new Date(fresh.dueAt + 7 * 86400_000).toISOString() });
+  f.setNext({ ...moved, providerEventId: 'following-instance', recurrenceId: new Date(fresh.dueAt + 7 * 86400_000).toISOString(), start: new Date(fresh.dueAt + 7 * 86400_000).toISOString() });
   f.setNow(old.dueAt); assert.equal((await f.wake(old)).status, 204); assert.equal(f.successors, 0);
   f.setNow(fresh.dueAt + 1000); assert.equal((await f.wake(fresh)).status, 204); assert.equal(f.successors, 1);
   assert.equal(f.jobs.length, 3); assert.equal(f.jobs[2].dueAt, fresh.dueAt + 7 * 86400_000);
@@ -104,7 +104,7 @@ test('Google recurrence discovery selects actual starts, exceptions and DST offs
   const google = new GoogleCalendar('access', async () => Response.json(responses.shift()));
   const candidates = await google.alarmCandidates('cal', Date.parse('2026-10-04T10:30:00+11:00'));
   assert.equal(candidates.length, 1); assert.equal(candidates[0].providerEventId, 'exception');
-  assert.equal(candidates[0].originalStartTime, '2026-10-18T10:00:00+11:00');
+  assert.equal(candidates[0].recurrenceId, '2026-10-17T23:00:00Z');
   const before = normalize('cal', { id: 'before', start: { dateTime: '2026-09-27T10:00:00+10:00' } })!;
   const after = normalize('cal', { id: 'after', start: { dateTime: '2026-10-04T10:00:00+11:00' } })!;
   assert.equal(Date.parse(after.start) - Date.parse(before.start), 7 * 86400_000 - 3600_000);

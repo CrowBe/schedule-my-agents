@@ -32,7 +32,14 @@ test(`Workers OAuth and discovery: ${scenario}`, async () => {
   const origin = 'https://example.chatgpt.site';
   const mf = new Miniflare({
     modules: true, script: outputFiles[0].text, compatibilityDate: '2026-05-15',
-    compatibilityFlags: ['nodejs_compat'], cf: false, fetchMock,
+    compatibilityFlags: ['nodejs_compat'], cf: false,
+    // The default fetchMock bridge follows redirects before workerd can apply
+    // its own redirect policy. Return the actual 302 to the worker instead.
+    outboundService:async request=>{
+      const options:RequestInit&{dispatcher:typeof fetchMock}={method:request.method,headers:Array.from(request.headers.entries()),
+        body:request.body?await request.arrayBuffer():undefined,redirect:'manual',dispatcher:fetchMock};
+      return fetch(request.url,options);
+    },
     d1Databases: { DB: 'calendar-test' },
     bindings: { SITE_ORIGIN: origin, GOOGLE_CLIENT_ID: 'client', GOOGLE_CLIENT_SECRET: 'secret', TOKEN_ENCRYPTION_KEY: btoa('a'.repeat(32)) },
   });
@@ -51,7 +58,8 @@ test(`Workers OAuth and discovery: ${scenario}`, async () => {
       headers: { ...headers, cookie: start.headers.get('set-cookie')!.split(';')[0] }, redirect: 'manual',
     });
     if (scenario === 'token redirect') {
-      assert.equal(callback.status, 502, await callback.clone().text());
+      assert.equal(callback.status, 422, await callback.clone().text());
+      assert.equal((await callback.clone().json() as {providerOutcome:string}).providerOutcome,'permanent');
       assert.equal(await db.prepare('SELECT refresh_token FROM connections').first(), null);
       return;
     }
@@ -61,7 +69,8 @@ test(`Workers OAuth and discovery: ${scenario}`, async () => {
     assert.ok(row && !row.refresh_token.includes('refresh-private'));
     const calendars = await mf.dispatchFetch(origin + '/api/calendars', { headers });
     if (scenario === 'calendar redirect') {
-      assert.equal(calendars.status, 502, await calendars.clone().text());
+      assert.equal(calendars.status, 422, await calendars.clone().text());
+      assert.equal((await calendars.clone().json() as {providerOutcome:string}).providerOutcome,'permanent');
       return;
     }
     assert.equal(calendars.status, 200, await calendars.clone().text());
@@ -144,7 +153,9 @@ test('Workers E2E: OAuth, consent, push create/edit/cancel, failure recovery and
     assert.equal((await push('5')).status, 204);
     assert.equal(JSON.parse((await db.prepare('SELECT payload FROM events').first<{ payload: string }>())!.payload).title, 'Edited');
     failure = true;
-    assert.equal((await push('8')).status, 502);
+    const failedPush=await push('8');
+    assert.equal(failedPush.status, 503);
+    assert.equal((await failedPush.json() as {providerOutcome:string}).providerOutcome,'transient');
     assert.equal((await db.prepare('SELECT last_message, sync_failed FROM watches').first())!.last_message, '5');
     assert.equal((await db.prepare('SELECT sync_failed FROM watches').first())!.sync_failed, 1);
     failure = false; items = [];
@@ -180,7 +191,7 @@ test('Workers MCP subscription lifecycle with test-only callback transport and r
   try {
     const db=await mf.getD1Database('DB');
     for(const file of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort()) for(const statement of readFileSync('drizzle/'+file,'utf8').split('--> statement-breakpoint').filter(s=>s.trim())) await db.prepare(statement).run();
-    await db.prepare("INSERT INTO connections VALUES ('alice','encrypted',0)").run();
+    await db.prepare("INSERT INTO connections (owner,refresh_token,created_at) VALUES ('alice','encrypted',0)").run();
     await db.prepare("INSERT INTO calendars VALUES ('alice','personal','Personal',1,'g1')").run();
     const params={name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example.com/callback',secret:'whsec_'+btoa('s'.repeat(32))}};
     const rpc=async(method:string,owner='alice',transport=true)=> {

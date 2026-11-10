@@ -121,7 +121,7 @@ test('Workers E2E: Google sync → encrypted registration → actual alarm → s
       for (const sql of readFileSync(`drizzle/${file}`, 'utf8').split('--> statement-breakpoint').filter(s => s.trim())) await db.prepare(sql).run();
     }
     const owner = 'private-owner';
-    await db.prepare('INSERT INTO connections VALUES (?, ?, ?)').bind(owner, await seal('refresh', encryption, owner), Date.now()).run();
+    await db.prepare('INSERT INTO connections (owner,refresh_token,created_at) VALUES (?, ?, ?)').bind(owner, await seal('refresh', encryption, owner), Date.now()).run();
     await db.prepare('INSERT INTO calendars VALUES (?, ?, ?, 1, ?)').bind(owner, 'cal', 'Personal', 'grant').run();
     await db.prepare("INSERT INTO watches (id, owner, calendar_id, generation, token_hash, resource_id, expiration, status) VALUES ('watch', ?, 'cal', 'grant', 'hash', 'resource', ?, 'active')").bind(owner, Date.now() + 3600_000).run();
     for(const [principal, count] of [[owner,1],['other',0]] as const) {

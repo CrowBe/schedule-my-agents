@@ -2,6 +2,12 @@
 
 **Connection**: An owner's authorization to read Google Calendar through an offline Google grant. It does not enable calendars.
 
+**Provider adapter**: The registered implementation of connection authorization, calendar operations, source notification decoding and cursor ordering. Google is the production adapter; an opaque second adapter proves the shared test contract.
+
+**Connection identity**: A saved provider ID and connection ID, distinct from owner/calendar/occurrence IDs. Replacement connections cannot inherit immutable work from an earlier connection.
+
+**Recurrence identity**: A provider-owned stable slot within a series, retained when the actual start moves. It may be an opaque string; common scheduling does not expand recurrence rules.
+
 **Discovered calendar**: A calendar visible to the connected Google account. It remains inactive until explicitly enabled.
 
 **Calendar grant**: The owner's explicit permission to process one calendar. Disabling or disconnecting removes this authority.

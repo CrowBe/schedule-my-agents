@@ -81,3 +81,14 @@ test('native transport bounds stalled DNS, fetch and successful challenge bodies
   if (stage === 'body') assert.equal(cancelled, true);
  }
 });
+
+test('native status-only responses retain bounded Retry-After hints while discarding bodies',async()=>{
+ for(const hint of ['12','9'.repeat(129)]) {
+  let cancelled=false;
+  const transport=createNativeOpenAICallbackTransport({resolve:async()=>['104.18.10.1'],fetcher:async()=>
+   new Response(new ReadableStream({cancel(){cancelled=true;}}),{status:429,headers:{'Retry-After':hint,'Set-Cookie':'private=discard'}})});
+  const response=await transport.post(destination,'{}',{},signal(),'status');
+  assert.equal(response.status,429);assert.equal(response.headers.get('Retry-After'),hint.length<=128?hint:null);
+  assert.equal(response.headers.get('Set-Cookie'),null);assert.equal(response.body,null);assert.equal(cancelled,true);
+ }
+});

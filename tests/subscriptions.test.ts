@@ -19,7 +19,7 @@ function fixture() {
   }
   const DB = {prepare:(q:string)=>new Prepared(q), async batch(statements:Statement[]) { sql.exec('BEGIN'); try { for(const s of statements) await s.run(); sql.exec('COMMIT'); } catch(e) { sql.exec('ROLLBACK'); throw e; } }};
   const env: Environment = {DB,TOKEN_ENCRYPTION_KEY:btoa('a'.repeat(32))};
-  sql.exec("INSERT INTO connections VALUES ('alice','encrypted',0); INSERT INTO calendars VALUES ('alice','personal','Personal',1,'g1'); INSERT INTO calendars VALUES ('alice','disabled','Disabled',0,'g2')");
+  sql.exec("INSERT INTO connections (owner,refresh_token,created_at) VALUES ('alice','encrypted',0); INSERT INTO calendars VALUES ('alice','personal','Personal',1,'g1'); INSERT INTO calendars VALUES ('alice','disabled','Disabled',0,'g2')");
   let now=1791200000000, calls=0;
   let respond: CallbackTransport['post'] = async (_url,body,headers) => {
     calls++; const expected = await signedHeaders(params.delivery.secret, headers['webhook-id'],headers['X-MCP-Subscription-Id'],body,now);

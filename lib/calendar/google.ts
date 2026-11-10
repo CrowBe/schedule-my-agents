@@ -1,7 +1,34 @@
-import { AppError, type Calendar, type CalendarEvent, type CalendarProvider, type Environment, type Watch } from './types.ts';
+import { AppError, ProviderFailure, type Calendar, type CalendarEvent, type CalendarProvider, type Environment, type Watch, type CalendarChange } from './types.ts';
 import { MAX_HORIZON } from '../../shared/alarm.ts';
+import { boundedProbe } from '../../shared/probe-deadline.ts';
 export const SCOPES = ['https://www.googleapis.com/auth/calendar.calendarlist.readonly', 'https://www.googleapis.com/auth/calendar.events.readonly'];
 const ROOT = 'https://www.googleapis.com/calendar/v3';
+export function readGoogleChange(request:Request):CalendarChange {
+  const watchId=request.headers.get('x-goog-channel-id'),token=request.headers.get('x-goog-channel-token'),resourceId=request.headers.get('x-goog-resource-id');
+  const state=request.headers.get('x-goog-resource-state'),cursor=request.headers.get('x-goog-message-number');
+  if(!watchId||!token||!resourceId||!cursor||!/^\d{1,30}$/.test(cursor)||!['sync','exists','not_exists'].includes(state??'')) throw new AppError(400,'Invalid Google notification headers.');
+  return {watchId,token,resourceId,cursor,state:state==='sync'?'initial':state==='not_exists'?'removed':'changed'};
+}
+export function newerGoogleChange(cursor:string,previous:string|null) { return !previous || BigInt(cursor)>BigInt(previous); }
+async function googleFailure(response:Response,signal:AbortSignal,authorization=false):Promise<ProviderFailure> {
+  let reasons:string[]=[];
+  const reader=response.body?.getReader();
+  try {
+    if(reader) {
+      const decoder=new TextDecoder();let text='',size=0;
+      for(;;) {const part=await boundedProbe(reader.read(),signal);if(part.done) break;size+=part.value.byteLength;if(size>4096) break;text+=decoder.decode(part.value,{stream:true});}
+      if(size<=4096) {
+        const data=JSON.parse(text+decoder.decode()) as {error?:string|{errors?:{reason?:string}[]}};
+        reasons=typeof data.error==='string'?[data.error]:(data.error?.errors??[]).map(e=>e.reason??'');
+      }
+    }
+  } catch { /* Classification uses fixed statuses when the bounded error body is unavailable. */ }
+  finally {void reader?.cancel().catch(()=>{});}
+  const limited=reasons.some(reason=>['rateLimitExceeded','userRateLimitExceeded','quotaExceeded'].includes(reason));
+  if(limited || [408,429].includes(response.status) || response.status>=500) return new ProviderFailure('transient','Calendar provider is temporarily unavailable.',response.headers.get('Retry-After'));
+  if(reasons.includes('invalid_grant') || [401,403,404].includes(response.status) || (authorization && response.status===400)) return new ProviderFailure('authorization_lost','Google access is unavailable. Reconnect Google if authorization was revoked.');
+  return new ProviderFailure('permanent','Calendar provider rejected this request.');
+}
 export type Fetch = typeof fetch;
 type GoogleEvent = { id: string; summary?: string; description?: string; status?: string; recurrence?: string[]; recurringEventId?: string; originalStartTime?: {dateTime?: string}; start?: {dateTime?: string; date?: string}; end?: {dateTime?: string; date?: string} };
 export function normalize(calendarId: string, item: GoogleEvent): CalendarEvent | null {
@@ -10,29 +37,45 @@ export function normalize(calendarId: string, item: GoogleEvent): CalendarEvent 
   return { id: `${calendarId}:${item.id}`, calendarId, provider: 'google', providerEventId: item.id,
     title: item.summary?.slice(0, 512), description: item.description?.slice(0, 8192),
     start: item.start.dateTime, end: item.end?.dateTime, status: item.status ?? 'confirmed',
-    ...(item.recurringEventId ? { recurringEventId: item.recurringEventId, originalStartTime: item.originalStartTime?.dateTime } : {}) };
+    ...(item.recurringEventId ? { seriesId: item.recurringEventId, recurrenceId: item.originalStartTime?.dateTime && Number.isFinite(Date.parse(item.originalStartTime.dateTime))
+      ? new Date(item.originalStartTime.dateTime).toISOString().replace('.000Z','Z') : undefined } : {}) };
 }
 export async function tokenRequest(env: Environment, values: Record<string, string>, http: Fetch) {
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) throw new AppError(503, 'Google OAuth is not configured.');
   // Workers supports manual/follow redirects. Never follow credential-bearing requests.
-  const response = await http('https://oauth2.googleapis.com/token', { method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(10_000),
-    body: new URLSearchParams({ ...values, client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET }) });
-  if (!response.ok) throw new AppError(502, 'Google authorization failed. Reconnect Google if access was revoked.');
+  const signal=AbortSignal.timeout(10_000);
+  let response:Response;
+  try {response = await http('https://oauth2.googleapis.com/token', { method: 'POST', redirect: 'manual', signal,
+    body: new URLSearchParams({ ...values, client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET }) });}
+  catch {throw new ProviderFailure('transient','Calendar authorization is temporarily unavailable.');}
+  if (!response.ok) throw await googleFailure(response,signal,true);
   const tokens = await response.json() as { access_token?: string; refresh_token?: string; scope?: string };
   if (!tokens.access_token) throw new AppError(502, 'Google did not return an access token.');
   return tokens;
 }
 export class GoogleCalendar implements CalendarProvider {
+  readonly providerId = 'google';
+  #accessToken: string;
+  #refreshAccess?:()=>Promise<string>;
   private http: Fetch;
-  constructor(private accessToken: string, http: Fetch) {
+  constructor(accessToken: string, http: Fetch, refreshAccess?:()=>Promise<string>) {
+    this.#accessToken = accessToken;
+    this.#refreshAccess = refreshAccess;
     // Call native fetch as a function, without making this adapter its receiver.
     this.http = (input, init) => http(input, init);
   }
-  private async call(path: string, init: RequestInit = {}, missingIsNull = false) {
-    const response = await this.http(`${ROOT}${path}`, { ...init, redirect: 'manual', signal: AbortSignal.timeout(10_000),
-      headers: { Authorization: `Bearer ${this.accessToken}`, 'Content-Type': 'application/json' } });
-    if (missingIsNull && [404, 410].includes(response.status)) return null;
-    if (!response.ok) throw new AppError(response.status === 403 || response.status === 404 ? 403 : 502, 'Google Calendar request failed. Check calendar access and reconnect if needed.');
+  private async call(path: string, init: RequestInit = {}, missingIsNull = false, refreshAllowed=true):Promise<unknown> {
+    const signal=AbortSignal.timeout(10_000);
+    let response:Response;
+    try {response = await this.http(`${ROOT}${path}`, { ...init, redirect: 'manual', signal,
+      headers: { Authorization: `Bearer ${this.#accessToken}`, 'Content-Type': 'application/json' } });}
+    catch {throw new ProviderFailure('transient','Calendar provider is temporarily unavailable.');}
+    if(response.status===401 && this.#refreshAccess && refreshAllowed) {
+      void response.body?.cancel().catch(()=>{});this.#accessToken=await this.#refreshAccess();
+      return this.call(path,init,missingIsNull,false);
+    }
+    if (missingIsNull && [404, 410].includes(response.status)) {void response.body?.cancel().catch(()=>{});return null;}
+    if (!response.ok) throw await googleFailure(response,signal);
     return response.status === 204 ? {} : response.json();
   }
   async discoverCalendars(): Promise<Calendar[]> {

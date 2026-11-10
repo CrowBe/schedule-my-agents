@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { serializeOccurrence, deliveryHeaders, deliveryOutcome, MAX_EVENT_BYTES } from '../lib/calendar/delivery.ts';
+import { serializeOccurrence, deliveryHeaders, deliveryOutcome, retryDelay, MAX_EVENT_BYTES } from '../lib/calendar/delivery.ts';
 import type { CalendarEvent } from '../lib/calendar/types.ts';
-const occurrence: CalendarEvent = { id: 'internal', calendarId: 'personal', providerEventId: 'google-id', provider: 'google', start: '2026-10-06T20:00:00+11:00', status: 'confirmed', title: 'Review', description: 'Untrusted calendar text', recurringEventId: 'series' };
+const occurrence: CalendarEvent = { id: 'internal', calendarId: 'personal', providerEventId: 'google-id', provider: 'google', start: '2026-10-06T20:00:00+11:00', status: 'confirmed', title: 'Review', description: 'Untrusted calendar text', seriesId: 'series' };
 test('minimal envelope separates logical and provider identity and preserves occurrence time', () => {
   const event = JSON.parse(serializeOccurrence('evt_logical', occurrence));
-  assert.deepEqual(event, { eventId: 'evt_logical', name: 'calendar.event.starting', timestamp: '2026-10-06T09:00:00.000Z', data: { calendarId: 'personal', eventId: 'google-id', start: occurrence.start, title: 'Review', description: occurrence.description }, cursor: null });
+  assert.deepEqual(event, { eventId: 'evt_logical', name: 'calendar.event.starting', timestamp: '2026-10-06T09:00:00.000Z', data: { calendarId: 'personal', eventId: 'google-id', start: '2026-10-06T09:00:00.000Z', title: 'Review', description: occurrence.description }, cursor: null });
   for (const value of [{...occurrence,status:'cancelled'},{...occurrence,start:'invalid'}]) assert.throws(()=>serializeOccurrence('evt_logical',value));
   assert.throws(()=>serializeOccurrence('google-id',occurrence));
 });
@@ -15,7 +15,7 @@ test('payload bound counts UTF-8 bytes and never truncates content', () => {
   const available = MAX_EVENT_BYTES - new TextEncoder().encode(base).byteLength;
   assert.equal(new TextEncoder().encode(serializeOccurrence('evt_logical',{...occurrence,description:'a'.repeat(available)})).byteLength, MAX_EVENT_BYTES);
   assert.throws(()=>serializeOccurrence('evt_logical',{...occurrence,description:'a'.repeat(available+1)}));
-  assert.throws(()=>serializeOccurrence('evt_logical',{...occurrence,description:'界'.repeat(Math.ceil(available/3))}));
+  assert.throws(()=>serializeOccurrence('evt_logical',{...occurrence,description:'界'.repeat(Math.floor(available/3)+1)}));
 });
 test('independent receiver verifies exact body, both rotation keys and fresh retry signatures', async () => {
   const body = serializeOccurrence('evt_logical',occurrence), now = 1791277200000;
@@ -56,7 +56,7 @@ function fixture() {
   }
   const DB = {prepare:(q:string)=>new Prepared(q), async batch(statements:Statement[]) { sql.exec('BEGIN'); try { for(const s of statements) await s.run(); sql.exec('COMMIT'); } catch(e) { sql.exec('ROLLBACK'); throw e; } }};
   const env: Environment = {DB,TOKEN_ENCRYPTION_KEY:btoa('a'.repeat(32))};
-  sql.exec("INSERT INTO connections VALUES ('alice','encrypted',0); INSERT INTO calendars VALUES ('alice','personal','Personal',1,'g1'); INSERT INTO calendars VALUES ('alice','disabled','Disabled',0,'g2')");
+  sql.exec("INSERT INTO connections (owner,refresh_token,created_at) VALUES ('alice','encrypted',0); INSERT INTO calendars VALUES ('alice','personal','Personal',1,'g1'); INSERT INTO calendars VALUES ('alice','disabled','Disabled',0,'g2')");
   let now=1791200000000, calls=0;
   let respond: CallbackTransport['post'] = async (_url,body,headers) => {
     calls++; const expected = await signedHeaders(params.delivery.secret, headers['webhook-id'],headers['X-MCP-Subscription-Id'],body,now);
@@ -69,13 +69,13 @@ function fixture() {
   const params={name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example.com:443/callback',secret:'whsec_'+btoa('s'.repeat(32))},ttlMs:600_000};
   return {sql,env,store,service,params, setNow:(v:number)=>now=v, now:()=>now,calls:()=>calls,setRespond:(r:CallbackTransport['post'])=>respond=r};
 }
-async function ready(callbackUrl?: string) {
+async function ready(callbackUrl?: string, random?: () => number) {
   const f = fixture();
   if (callbackUrl) f.params.delivery.url = callbackUrl;
   const sub = await f.service().subscribe('alice', f.params);
   const event = {...occurrence, start:new Date(f.now()).toISOString()};
   await f.store.claimDue('logical','alice','personal','g1',event,f.now(),f.now(),f.now()+300_000);
-  const dispatch = () => new Deliveries(f.store,f.env,f.now,{post:(...args)=>respond(...args)}).dispatch('logical',event);
+  const dispatch = () => new Deliveries(f.store,f.env,f.now,{post:(...args)=>respond(...args)},random).dispatch('logical',event);
   let respond: CallbackTransport['post'] = async()=>new Response(null,{status:204});
   return {...f, sub, event, dispatch, response:(r:CallbackTransport['post'])=>respond=r};
 }
@@ -87,6 +87,27 @@ test('persisted delivery retries keep bytes and identity; accepted receipt survi
   f.setNow(f.now()+2000); await f.dispatch(); await f.dispatch();
   assert.equal(bodies.length,2); assert.equal(bodies[0],bodies[1]); assert.equal(ids[0],ids[1]); assert.notEqual(times[0],times[1]);
   const row=f.sql.prepare('SELECT * FROM deliveries').get()!; assert.equal(row.status,'accepted'); assert.equal(row.attempts,2); assert.equal(row.body,'');
+});
+test('a provider timezone formatting change preserves a pending callback body and logical identity',async()=>{
+ const f=await ready(),bodies:string[]=[];
+ f.response(async(_url,body)=>{bodies.push(body);return new Response(null,{status:bodies.length===1?503:204});});
+ await assert.rejects(f.dispatch(),/pending durable retry/);
+ f.event.start='2026-10-05T22:33:20+11:00';
+ assert.equal(Date.parse(f.event.start),1791200000000);
+ f.setNow(f.now()+2000);await f.dispatch();
+ assert.equal(bodies.length,2);assert.equal(bodies[0],bodies[1]);
+ assert.equal((await f.store.first<{status:string}>('SELECT status FROM deliveries'))?.status,'accepted');
+});
+test('legacy pending receipts remain usable only with the migrated original connection',async()=>{
+  for(const replaced of [false,true]) {
+    const f=await ready();let calls=0;
+    await f.store.run("UPDATE occurrence_outbox SET connection_id = ''");
+    if(replaced) await f.store.run("UPDATE connections SET connection_id = 'replacement'");
+    f.response(async()=>{calls++;return new Response(null,{status:204});});
+    await f.dispatch();
+    assert.equal(calls,replaced?0:1);
+    if(replaced) assert.equal((await f.store.first<{status:string}>('SELECT status FROM occurrence_outbox'))?.status,'terminal');
+  }
 });
 test('native delivery records a 2xx receipt without reading an oversized or stalled success body', async () => {
   for (const oversized of [false, true]) {
@@ -208,4 +229,42 @@ test('authority checks consuming the lease defer dispatch without dropping the e
   f.setNow(f.now() + 2000); await f.dispatch();
   assert.equal(calls, 1);
   assert.equal(f.sql.prepare('SELECT status FROM deliveries').get()!.status, 'accepted');
+});
+
+test('retry timing uses bounded injectable jitter and valid receiver hints',()=>{
+ const now=Date.parse('2026-10-16T00:00:00Z');
+ assert.equal(retryDelay(1,now,null,()=>0),1000);
+ assert.equal(retryDelay(1,now,null,()=>1),2000);
+ assert.equal(retryDelay(6,now,null,()=>1),60000);
+ assert.equal(retryDelay(1,now,'12',()=>0),12000);
+ assert.equal(retryDelay(1,now,new Date(now+20000).toUTCString(),()=>0),20000);
+ for(const hint of ['-1','1.5','tomorrow','2026-10-17','Sun, 31 Feb 2027 00:00:00 GMT', '9'.repeat(129)]) assert.equal(retryDelay(1,now,hint,()=>0),1000);
+ assert.equal(retryDelay(1,now,new Date(now-20000).toUTCString(),()=>0),1000);
+});
+test('receiver retry hints persist across restart, never send early and expire beyond the grace period',async()=>{
+ for(const hint of ['12','beyond-expiry']) {
+  const f=await ready(),started=f.now();let calls=0;
+  f.response(async()=>{calls++;return new Response(null,{status:429,headers:{'Retry-After':hint==='12'?'12':'301'}});});
+  if(hint==='beyond-expiry') {
+   await f.dispatch();await f.dispatch();
+   assert.equal((await f.store.first<{status:string}>('SELECT status FROM deliveries'))?.status,'exhausted');
+  } else {
+   await assert.rejects(f.dispatch(),/pending durable retry/);
+   assert.equal((await f.store.first<{next_at:number}>('SELECT next_at FROM deliveries'))?.next_at,started+12000);
+   f.setNow(started+11999);await assert.rejects(f.dispatch(),/pending durable retry/);assert.equal(calls,1);
+   f.setNow(started+12000);f.response(async()=>{calls++;return new Response(null,{status:204});});
+   await f.dispatch();assert.equal((await f.store.first<{status:string}>('SELECT status FROM deliveries'))?.status,'accepted');
+  }
+  assert.equal(calls,hint==='12'?2:1);
+ }
+});
+
+test('injected retry jitter persists a positive lower bound with a controllable clock',async()=>{
+ const f=await ready(undefined,()=>0),start=f.now();let calls=0;
+ f.response(async()=>{calls++;throw new Error('transient connection failure');});
+ await assert.rejects(f.dispatch(),/pending durable retry/);
+ assert.equal((await f.store.first<{next_at:number}>('SELECT next_at FROM deliveries'))?.next_at,start+1000);
+ f.setNow(start+999);await assert.rejects(f.dispatch(),/pending durable retry/);assert.equal(calls,1);
+ f.setNow(start+1000);f.response(async()=>{calls++;return new Response(null,{status:204});});
+ await f.dispatch();assert.equal(calls,2);
 });

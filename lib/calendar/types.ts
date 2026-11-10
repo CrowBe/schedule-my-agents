@@ -23,11 +23,14 @@ export interface Environment {
 export type Calendar = { id: string; summary: string; accessRole: string };
 export type CalendarEvent = {
   id: string; calendarId: string; title?: string; description?: string;
-  start: string; end?: string; status: string; provider: 'google'; providerEventId: string;
-  recurringEventId?: string; originalStartTime?: string;
+  start: string; end?: string; status: string; provider: string; providerEventId: string;
+  // Provider-owned stable identities. A recurrence identity need not be a date.
+  seriesId?: string; recurrenceId?: string;
 };
 export type Watch = { id: string; token: string; resourceId: string; expiration: number };
+export type CalendarChange = { watchId:string; token:string; resourceId:string; cursor:string; state:'initial'|'changed'|'removed' };
 export interface CalendarProvider {
+  readonly providerId?: string;
   discoverCalendars(): Promise<Calendar[]>;
   watchCalendar(calendarId: string, id: string, token: string, address: string): Promise<Watch>;
   stopWatchingCalendar(id: string, resourceId: string): Promise<void>;
@@ -38,4 +41,11 @@ export interface CalendarProvider {
 }
 export class AppError extends Error {
   constructor(public status: number, message: string) { super(message); }
+}
+export class ProviderFailure extends AppError {
+  readonly retryAfter?:string;
+  constructor(public readonly kind:'transient'|'authorization_lost'|'permanent',message='Calendar provider request failed.',retryAfter?:string|null) {
+    super(kind==='transient'?503:kind==='authorization_lost'?403:422,message);
+    if(retryAfter && retryAfter.length<=128 && !/[\x00-\x1f\x7f]/.test(retryAfter)) this.retryAfter=retryAfter;
+  }
 }

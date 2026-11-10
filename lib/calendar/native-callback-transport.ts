@@ -48,7 +48,8 @@ export function createNativeOpenAICallbackTransport(options: {
   // Only successful verification replies need their bounded challenge echo.
   if (!response.ok || responseMode === 'status') {
    void response.body?.cancel().catch(() => {});
-   return new Response(null, { status: response.status });
+   const retryAfter = response.headers.get('Retry-After');
+   return new Response(null, { status: response.status, headers: retryAfter && retryAfter.length <= 128 && !/[\x00-\x1f\x7f]/.test(retryAfter) ? { 'Retry-After': retryAfter } : {} });
   }
   // Verification needs a bounded challenge echo. Delivery discards the body
   // as soon as headers acknowledge receipt, even if the body never finishes.

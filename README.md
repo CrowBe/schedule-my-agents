@@ -1,5 +1,7 @@
 # Schedule my agents
 
+Calendar-provider and reliability work is tracked in [the provider contract](docs/calendar-provider-contract.md), [the checklist](docs/calendar-reliability-checklist.md) and [the implementation resume card](docs/calendar-reliability-resume.md). The delivery grace period stays five minutes; calendar continuation requests do not bypass execution allowance.
+
 Use Google Calendar as the scheduling interface for an agent through a publicly reachable ChatGPT Site with authenticated setup and owner-scoped calendar data. Google push synchronizes explicitly enabled calendars; opaque durable alarms revalidate occurrences at their start and a signed persisted outbox delivers `calendar.event.starting` to a subscribed ChatGPT Work Cloud chat.
 
 Live OAuth/discovery, persisted consent, real watch creation and Google push create/edit/delete synchronization are verified. The user authorized public hosting to unblock Google ingress; setup and calendar data remain authenticated and owner scoped. See [VERIFICATION.md](VERIFICATION.md) for current evidence and [docs/private-ingress.md](docs/private-ingress.md) for issue #2.
