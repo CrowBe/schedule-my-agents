@@ -3,10 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Schedule my agents",
-  description: "Explicitly connect Google Calendar to your agent.",
-  other: {
-    "codex-preview": "development",
-  },
+  description: "Self-hosted calendar bridge for MCP Events subscribers.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",

@@ -15,7 +15,8 @@ function fixture() {
   for (const f of readdirSync('drizzle').filter(f => f.endsWith('.sql')).sort()) sql.exec(readFileSync(`drizzle/${f}`, 'utf8'));
   class Prepared implements Statement {
     values: SQLInputValue[] = [];
-    constructor(private query: string) {}
+    private query: string;
+    constructor(query: string) { this.query = query; }
     bind(...values: unknown[]) { this.values = values as SQLInputValue[]; return this; }
     async first<T>() { return (sql.prepare(this.query).get(...this.values) ?? null) as T | null; }
     async all<T>() { return { results: sql.prepare(this.query).all(...this.values) as T[] }; }
@@ -56,7 +57,7 @@ test('encrypted alarm → live revalidation → restart/concurrent deduplicated 
   assert.equal((await f.wake(job, false)).status, 403);
   for (const response of await Promise.all([f.wake(job), f.wake(job), f.wake(job)])) assert.equal(response.status, 204);
   assert.equal(f.sql.prepare('SELECT count(*) n FROM occurrence_outbox').get()!.n, 1);
-  assert.equal((await f.service().handle(new Request(f.env.SITE_ORIGIN + '/api/status', { headers: { 'oai-authenticated-user-id': 'private-owner' } }))).status, 200);
+  assert.equal((await f.service().handle(new Request(f.env.SITE_ORIGIN + '/api/status', { headers: { 'x-authenticated-owner': 'private-owner' } }))).status, 200);
   assert.equal(f.sql.prepare('SELECT count(*) n FROM occurrence_outbox').get()!.n, 1);
   assert.equal((await f.wake({ ...job, envelope: job.envelope.slice(0, -4) + 'aaaa' })).status, 403);
   f.setNow(job.expiresAt + 86400_000);

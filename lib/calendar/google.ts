@@ -86,7 +86,7 @@ export class GoogleCalendar implements CalendarProvider {
       results.push(...(data.items ?? []).map(c => ({ id: c.id, summary: c.summary ?? c.id, accessRole: c.accessRole })));
       pageToken = data.nextPageToken; if (!pageToken) return results;
     }
-    throw new AppError(422, 'Calendar discovery exceeds the proof-of-concept limit.');
+    throw new AppError(422, 'Calendar discovery exceeds the bounded page limit.');
   }
   async watchCalendar(calendarId: string, id: string, token: string, address: string): Promise<Watch> {
     const data = await this.call(`/calendars/${encodeURIComponent(calendarId)}/events/watch`, { method: 'POST', body: JSON.stringify({ id, token, type: 'web_hook', address }) }) as {id: string; resourceId: string; expiration: string};
@@ -105,7 +105,7 @@ export class GoogleCalendar implements CalendarProvider {
       for (const item of data.items ?? []) { const event = normalize(calendarId, item); if (event && Date.parse(event.start) >= now) results.push(event); }
       pageToken = data.nextPageToken; if (!pageToken) return results;
     }
-    throw new AppError(422, 'Upcoming events exceed the proof-of-concept limit.');
+    throw new AppError(422, 'Upcoming events exceed the bounded page limit.');
   }
   async getOccurrence(calendarId: string, eventId: string) {
     const item = await this.call(`/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {}, true) as GoogleEvent | null;

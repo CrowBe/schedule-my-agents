@@ -42,13 +42,14 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { Subscriptions, signedHeaders, type CallbackTransport } from '../lib/calendar/subscriptions.ts';
 import { Store } from '../lib/calendar/store.ts';
 import { Deliveries } from '../lib/calendar/delivery.ts';
-import { createNativeOpenAICallbackTransport } from '../lib/calendar/native-callback-transport.ts';
 import type { Environment, Statement } from '../lib/calendar/types.ts';
 function fixture() {
   const sql = new DatabaseSync(':memory:');
   for (const f of readdirSync('drizzle').filter(f => f.endsWith('.sql')).sort()) sql.exec(readFileSync('drizzle/'+f,'utf8'));
   class Prepared implements Statement {
-    values: SQLInputValue[] = []; constructor(private query: string) {}
+    values: SQLInputValue[] = [];
+    private query: string;
+    constructor(query: string) { this.query = query; }
     bind(...v: unknown[]) { this.values=v as SQLInputValue[]; return this; }
     async first<T>() { return (sql.prepare(this.query).get(...this.values) ?? null) as T | null; }
     async all<T>() { return {results:sql.prepare(this.query).all(...this.values) as T[]}; }
@@ -109,21 +110,6 @@ test('legacy pending receipts remain usable only with the migrated original conn
     if(replaced) assert.equal((await f.store.first<{status:string}>('SELECT status FROM occurrence_outbox'))?.status,'terminal');
   }
 });
-test('native delivery records a 2xx receipt without reading an oversized or stalled success body', async () => {
-  for (const oversized of [false, true]) {
-    const f = await ready('https://connectors.api.openai.com/mcp/events/test');
-    let cancelled = false;
-    const transport = createNativeOpenAICallbackTransport({ resolve: async () => ['104.18.10.1'], fetcher: async () =>
-      new Response(new ReadableStream({ start(c) { if (oversized) c.enqueue(new Uint8Array(4097)); }, cancel() { cancelled = true; } }), { status: 200 }) });
-    f.response(transport.post);
-    await f.dispatch();
-    const row = f.sql.prepare('SELECT status, attempts, last_status, body FROM deliveries').get()!;
-    assert.deepEqual({ ...row }, { status: 'accepted', attempts: 1, last_status: 200, body: '' });
-    assert.equal(cancelled, true);
-    await f.dispatch();
-    assert.equal(f.sql.prepare('SELECT attempts FROM deliveries').get()!.attempts, 1);
-  }
-});
 test('concurrent dispatch has one lease; crash recovery retains logical identity and bounds attempts',async()=>{
   const f=await ready(); let calls=0, release!:()=>void;
   f.response(async()=>{calls++;await new Promise<void>(resolve=>release=resolve);return new Response(null,{status:204});});
@@ -168,21 +154,6 @@ test('lost receiver acknowledgement retries the same logical event; audience sta
   await f.service().subscribe('alice',{...f.params,delivery:{...f.params.delivery,url:'https://another.example/callback'}});
   f.setNow(f.now()+2000);await f.dispatch();assert.deepEqual(receipts,['evt_logical','evt_logical']);
   assert.equal(f.sql.prepare('SELECT count(*) n FROM deliveries').get()!.n,1);
-});
-
-test('native terminal responses with oversized bodies persist a terminal delivery without retries', async () => {
-  for (const status of [302, 410, 413]) {
-    const f = await ready('https://connectors.api.openai.com/mcp/events/test');
-    let calls = 0;
-    const transport = createNativeOpenAICallbackTransport({ resolve: async () => ['104.18.10.1'], fetcher: async () => {
-      calls++; return new Response('x'.repeat(4097), { status });
-    } });
-    f.response(transport.post);
-    await f.dispatch(); await f.dispatch();
-    assert.equal(calls, 1);
-    const row = f.sql.prepare('SELECT status, last_status, body FROM deliveries').get()!;
-    assert.equal(row.status, 'terminal'); assert.equal(row.last_status, status); assert.equal(row.body, '');
-  }
 });
 
 test('slow authority checks bound the send to the remaining lease and recover on retry', async () => {

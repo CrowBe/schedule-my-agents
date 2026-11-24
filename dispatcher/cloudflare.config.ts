@@ -12,7 +12,7 @@ export default defineConfig({
       ALARMS: bindings.durableObject({ worker: 'calendar-opaque-alarms', exportName: 'Alarm' }),
       REGISTRATION_KEY: bindings.secret(),
       CALLBACK_KEY: bindings.secret(),
-      CALLBACK_URL: bindings.text('https://schedule-my-agents.bennycrow91.chatgpt.site/api/alarms/wake'),
+      CALLBACK_URL: bindings.text('https://calendar.example.com/api/alarms/wake'),
     },
     observability: { enabled: true, logs: { enabled: true, invocationLogs: false } },
   },

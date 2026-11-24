@@ -32,7 +32,7 @@ test('Workers/D1 revocation races during provider revalidation prevent signed di
       await db.prepare("INSERT INTO calendars VALUES ('alice','personal','Personal',1,'g1')").run();
       await db.prepare("INSERT INTO watches (id,owner,calendar_id,generation,token_hash,resource_id,expiration,status) VALUES ('watch','alice','personal','g1','hash','resource',?,'active')").bind(Date.now()+3600_000).run();
       const params={name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example/callback',secret:'whsec_'+btoa('s'.repeat(32))}};
-      const call=(path:string,body:unknown)=>mf.dispatchFetch('https://site.example'+path,{method:'POST',headers:{origin:'https://site.example','oai-authenticated-user-id':'alice','x-fixture-now':String(fixtureNow)},body:JSON.stringify(body)});
+      const call=(path:string,body:unknown)=>mf.dispatchFetch('https://site.example'+path,{method:'POST',headers:{origin:'https://site.example','x-authenticated-owner':'alice','x-fixture-now':String(fixtureNow)},body:JSON.stringify(body)});
       assert.ok(((await (await call('/mcp',{jsonrpc:'2.0',id:1,method:'events/subscribe',params})).json()) as {result?:unknown}).result);
       dueAt=fixtureNow+250;event.start.dateTime=new Date(dueAt).toISOString();
       assert.equal((await call('/api/calendars/resync',{calendarId:'personal'})).status,200);assert.ok(job);

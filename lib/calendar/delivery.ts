@@ -61,7 +61,14 @@ type Receipt = { id: string; owner: string; calendar_id: string; generation: str
 type Delivery = { subscription_id: string; body: string; attempts: number; lease: string };
 const MAX_ATTEMPTS = 6;
 export class Deliveries {
-  constructor(private store: Store, private env: Environment, private now: () => number, private transport?: CallbackTransport, private random: () => number = Math.random) {}
+  private store: Store;
+  private env: Environment;
+  private now: () => number;
+  private transport?: CallbackTransport;
+  private random: () => number;
+  constructor(store: Store, env: Environment, now: () => number, transport?: CallbackTransport, random: () => number = Math.random) {
+    this.store = store; this.env = env; this.now = now; this.transport = transport; this.random = random;
+  }
   async dispatch(id: string, current: CalendarEvent) {
     const receipt = await this.store.first<Receipt>('SELECT * FROM occurrence_outbox WHERE id = ?', id);
     if (!receipt || receipt.status === 'terminal') return;

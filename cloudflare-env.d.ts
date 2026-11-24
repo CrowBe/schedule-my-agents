@@ -10,6 +10,6 @@ declare namespace Cloudflare {
     ALARM_ENCRYPTION_KEY?: string;
     ALARM_REGISTRATION_KEY?: string;
     ALARM_CALLBACK_KEY?: string;
-    BUCKET?: R2Bucket;
+    MCP_EVENTS_READY?: string;
   }
 }

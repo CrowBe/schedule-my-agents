@@ -16,7 +16,7 @@ async function rejected(input:Request,code:number,id:string|null='check',status=
 test('modern protocol accepts mirrored headers, client identity and capabilities',async()=>{
   const parsed=await readMcpMessage(request(),'https://site.example');
   assert.equal(parsed.version,version); assert.equal(parsed.modern,true); assert.equal(parsed.rpc.id,'check');
-  for (const origin of ['https://site.example','https://chatgpt.com']) await readMcpMessage(request({headers:{Origin:origin}}),'https://site.example');
+  await readMcpMessage(request({headers:{Origin:'https://site.example'}}),'https://site.example');
 });
 test('explicit unsupported versions report requested and supported versions',async()=>{
   await assert.rejects(readMcpMessage(request({meta:{...metadata,'io.modelcontextprotocol/protocolVersion':'2099-01-01'},headers:{'MCP-Protocol-Version':'2099-01-01'}})),error=>{

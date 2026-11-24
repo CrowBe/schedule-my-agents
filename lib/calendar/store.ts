@@ -3,7 +3,8 @@ export type CalendarRow = { owner: string; calendar_id: string; summary: string;
 export type WatchRow = { id: string; owner: string; calendar_id: string; generation: string; token_hash: string; resource_id: string | null; expiration: number; status: string; last_message: string | null; synced_at: number | null; provider_id:string; connection_id:string };
 export type CalendarConnection = { owner: string; id: string; providerId: string; legacy: boolean; created_at: number };
 export class Store {
-  constructor(private db: Database | undefined) { if (!db) throw new AppError(503, 'Persistent storage is unavailable.'); }
+  private db: Database | undefined;
+  constructor(db: Database | undefined) { this.db = db; if (!db) throw new AppError(503, 'Persistent storage is unavailable.'); }
   statement(sql: string, ...values: unknown[]) { return this.db!.prepare(sql).bind(...values); }
   async batch(statements: ReturnType<Store["statement"]>[]) { await this.db!.batch(statements); }
   async run(sql: string, ...values: unknown[]) { await this.statement(sql, ...values).run(); }

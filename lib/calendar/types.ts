@@ -40,12 +40,15 @@ export interface CalendarProvider {
   nextOccurrence?(calendarId: string, seriesId: string, after: number): Promise<CalendarEvent | null>;
 }
 export class AppError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  status: number;
+  constructor(status: number, message: string) { super(message); this.status = status; }
 }
 export class ProviderFailure extends AppError {
-  readonly retryAfter?:string;
-  constructor(public readonly kind:'transient'|'authorization_lost'|'permanent',message='Calendar provider request failed.',retryAfter?:string|null) {
-    super(kind==='transient'?503:kind==='authorization_lost'?403:422,message);
-    if(retryAfter && retryAfter.length<=128 && !/[\x00-\x1f\x7f]/.test(retryAfter)) this.retryAfter=retryAfter;
+  readonly kind: 'transient' | 'authorization_lost' | 'permanent';
+  readonly retryAfter?: string;
+  constructor(kind: 'transient' | 'authorization_lost' | 'permanent', message = 'Calendar provider request failed.', retryAfter?: string | null) {
+    super(kind === 'transient' ? 503 : kind === 'authorization_lost' ? 403 : 422, message);
+    this.kind = kind;
+    if (retryAfter && retryAfter.length <= 128 && !/[\x00-\x1f\x7f]/.test(retryAfter)) this.retryAfter = retryAfter;
   }
 }
