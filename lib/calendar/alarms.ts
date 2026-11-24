@@ -17,7 +17,15 @@ function recurrenceIdentity(provider:string|undefined,id:string|undefined) {
     ? new Date(id).toISOString().replace('.000Z','Z') : id;
 }
 export class OccurrenceAlarms {
-  constructor(private env: Environment, private store: Store, private http: Fetch, private now: () => number, private provider: (owner: string) => Promise<CalendarProvider>, private transport?: CallbackTransport) {}
+  private env: Environment;
+  private store: Store;
+  private http: Fetch;
+  private now: () => number;
+  private provider: (owner: string) => Promise<CalendarProvider>;
+  private transport?: CallbackTransport;
+  constructor(env: Environment, store: Store, http: Fetch, now: () => number, provider: (owner: string) => Promise<CalendarProvider>, transport?: CallbackTransport) {
+    this.env = env; this.store = store; this.http = http; this.now = now; this.provider = provider; this.transport = transport;
+  }
   get configured() { return Boolean(this.env.DISPATCHER_ORIGIN && this.env.ALARM_ENCRYPTION_KEY && this.env.ALARM_REGISTRATION_KEY && this.env.ALARM_CALLBACK_KEY); }
   private async id(e: Envelope) {
     const material = await crypto.subtle.importKey('raw', bytes(this.env.ALARM_ENCRYPTION_KEY!), 'HKDF', false, ['deriveBits']);

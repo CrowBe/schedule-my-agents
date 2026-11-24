@@ -29,7 +29,7 @@ test(`Workers OAuth and discovery: ${scenario}`, async () => {
     .reply(scenario === 'calendar redirect' ? 302 : 200,
       JSON.stringify({ items: [{ id: 'personal', summary: 'Personal', accessRole: 'owner' }] }),
       { headers: { location: 'https://unexpected.example/calendar' } });
-  const origin = 'https://example.chatgpt.site';
+  const origin = 'https://bridge.example';
   const mf = new Miniflare({
     modules: true, script: outputFiles[0].text, compatibilityDate: '2026-05-15',
     compatibilityFlags: ['nodejs_compat'], cf: false,
@@ -50,7 +50,7 @@ test(`Workers OAuth and discovery: ${scenario}`, async () => {
         await db.prepare(statement).run();
       }
     }
-    const headers = { 'oai-authenticated-user-id': 'alice', origin };
+    const headers = { 'x-authenticated-owner': 'alice', origin };
     const start = await mf.dispatchFetch(origin + '/api/google/connect', { method: 'POST', headers, redirect: 'manual' });
     assert.equal(start.status, 303, await start.text());
     const state = new URL(start.headers.get('location')!).searchParams.get('state');
@@ -112,7 +112,7 @@ test('Workers E2E: OAuth, consent, push create/edit/cancel, failure recovery and
     if (url.pathname === '/calendar/v3/channels/stop') return new Response(null, { status: 204 });
     throw new Error('Unexpected outbound request'); // No external networking in this test.
   };
-  const origin = 'https://example.chatgpt.site';
+  const origin = 'https://bridge.example';
   const mf = new Miniflare({ modules: true, script: outputFiles[0].text,
     compatibilityDate: '2026-05-15', compatibilityFlags: ['nodejs_compat'], cf: false, outboundService,
     d1Databases: { DB: 'full-flow' }, bindings: { SITE_ORIGIN: origin, GOOGLE_CLIENT_ID: 'client',
@@ -122,7 +122,7 @@ test('Workers E2E: OAuth, consent, push create/edit/cancel, failure recovery and
     for (const file of readdirSync('drizzle').filter(f => f.endsWith('.sql')).sort()) {
       for (const statement of readFileSync(`drizzle/${file}`, 'utf8').split('--> statement-breakpoint').filter(s => s.trim())) await db.prepare(statement).run();
     }
-    const headers = { 'oai-authenticated-user-id': 'alice', origin };
+    const headers = { 'x-authenticated-owner': 'alice', origin };
     const call = (path: string, body?: unknown) => mf.dispatchFetch(origin + path, {
       method: body === undefined ? 'GET' : 'POST', headers, body: body === undefined ? undefined : JSON.stringify(body), redirect: 'manual',
     });
@@ -195,7 +195,7 @@ test('Workers MCP subscription lifecycle with test-only callback transport and r
     await db.prepare("INSERT INTO calendars VALUES ('alice','personal','Personal',1,'g1')").run();
     const params={name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example.com/callback',secret:'whsec_'+btoa('s'.repeat(32))}};
     const rpc=async(method:string,owner='alice',transport=true)=> {
-      const response=await mf.dispatchFetch('https://example.chatgpt.site/mcp',{method:'POST',headers:{'oai-authenticated-user-id':owner,...(transport?{'test-transport':'true'}:{})},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});
+      const response=await mf.dispatchFetch('https://bridge.example/mcp',{method:'POST',headers:{'x-authenticated-owner':owner,...(transport?{'test-transport':'true'}:{})},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});
       return await response.json() as {result?:{id:string};error?:{code:number;data?:{reason:string}}};
     };
     assert.equal((await rpc('events/subscribe','alice',false)).error?.data?.reason,'transport_unavailable');
@@ -205,7 +205,7 @@ test('Workers MCP subscription lifecycle with test-only callback transport and r
     assert.equal((await rpc('events/subscribe','bob')).error?.code,-32001);
     await rpc('events/unsubscribe'); await rpc('events/unsubscribe');
     assert.equal(await (await mf.getD1Database('DB')).prepare('SELECT id FROM subscriptions').first(),null);
-    assert.deepEqual(await (await mf.dispatchFetch('https://example.chatgpt.site/mcp',{method:'POST',headers:{'oai-authenticated-user-id':'alice'},body:JSON.stringify({jsonrpc:'2.0',id:2,method:'events/list'})})).json(),{jsonrpc:'2.0',id:2,result:{events:[]}});
+    assert.deepEqual(await (await mf.dispatchFetch('https://bridge.example/mcp',{method:'POST',headers:{'x-authenticated-owner':'alice'},body:JSON.stringify({jsonrpc:'2.0',id:2,method:'events/list'})})).json(),{jsonrpc:'2.0',id:2,result:{events:[]}});
   } finally { await mf.dispose(); }
 });
 
@@ -216,7 +216,7 @@ test('owner subscription removal is authenticated, origin-checked and isolated f
       resolveDir: process.cwd(), sourcefile: 'subscription-removal-worker.ts' },
     bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022',
   });
-  const origin = 'https://example.chatgpt.site';
+  const origin = 'https://bridge.example';
   const mf = new Miniflare({ modules: true, script: outputFiles[0].text, compatibilityDate: '2026-05-15',
     compatibilityFlags: ['nodejs_compat'], cf: false, d1Databases: { DB: 'subscription-removal' }, bindings: { SITE_ORIGIN: origin } });
   try {
@@ -237,8 +237,8 @@ test('owner subscription removal is authenticated, origin-checked and isolated f
       method: 'POST', headers, body: JSON.stringify({ calendarId }),
     });
     assert.equal((await remove({ origin })).status, 401);
-    assert.equal((await remove({ origin: 'https://untrusted.example', 'oai-authenticated-user-id': 'alice' })).status, 403);
-    const headers = { origin, 'oai-authenticated-user-id': 'alice' };
+    assert.equal((await remove({ origin: 'https://untrusted.example', 'x-authenticated-owner': 'alice' })).status, 403);
+    const headers = { origin, 'x-authenticated-owner': 'alice' };
     const before = await (await mf.dispatchFetch(origin + '/api/status', { headers })).json() as { subscriptions: { calendar_id: string; count: number }[] };
     assert.deepEqual(before.subscriptions.sort((a, b) => a.calendar_id.localeCompare(b.calendar_id)), [{ calendar_id: 'other', count: 1 }, { calendar_id: 'personal', count: 1 }]);
     assert.equal((await remove(headers)).status, 200);

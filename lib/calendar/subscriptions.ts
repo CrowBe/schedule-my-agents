@@ -2,12 +2,12 @@ import { base64, digest, open, random, seal, unbase64 } from './crypto.ts';
 import { Store } from './store.ts';
 import type { Environment } from './types.ts';
 
-// The general callback contract requires public-IP pinning with hostname TLS.
-// The default implements it; an explicitly enabled OpenAI-only native-fetch
-// experiment tests delivery without claiming that connection-time guarantee.
+// Callback transport enforces connection-time public-IP validation with original-hostname TLS.
 export interface CallbackTransport { post(url: string, body: string, headers: Record<string, string>, signal: AbortSignal, responseMode?: 'body' | 'status'): Promise<Response> }
 export class SubscriptionError extends Error {
-  constructor(public code: number, message: string, public reason?: string) { super(message); }
+  code: number;
+  reason?: string;
+  constructor(code: number, message: string, reason?: string) { super(message); this.code = code; this.reason = reason; }
 }
 const invalid = (message: string): never => { throw new SubscriptionError(-32602, message); };
 export const eventDefinition = {
@@ -58,7 +58,13 @@ async function bounded<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 type Subscription = { id: string; owner: string; calendar_id: string; generation: string; callback_url: string; secret: string; previous_secret: string | null; rotation_until: number | null; expires_at: number; verified_at: number; revision: string };
 export class Subscriptions {
-  constructor(private store: Store, private env: Environment, private now: () => number, private transport?: CallbackTransport) {}
+  private store: Store;
+  private env: Environment;
+  private now: () => number;
+  private transport?: CallbackTransport;
+  constructor(store: Store, env: Environment, now: () => number, transport?: CallbackTransport) {
+    this.store = store; this.env = env; this.now = now; this.transport = transport;
+  }
   private async identity(owner: string, p: ReturnType<typeof parameters>) {
     // Fixed single-field filter schema gives canonical JSON independent of input order.
     return 'sub_' + await digest(JSON.stringify([owner, p.url, eventDefinition.name, { calendarId: p.calendarId }]));

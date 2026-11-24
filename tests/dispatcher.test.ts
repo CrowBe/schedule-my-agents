@@ -10,38 +10,13 @@ import { seal } from '../lib/calendar/crypto.ts';
 import { CALLBACK_PATH, LATE_WINDOW, mac, signedHeaders, verified, type AlarmJob } from '../shared/alarm.ts';
 
 async function dispatcherBundle() {
-  return (await build({ entryPoints: ['dispatcher/src/index.ts'], bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022', external: ['cloudflare:workers', 'cloudflare:sockets'] })).outputFiles[0].text;
+  return (await build({ entryPoints: ['dispatcher/src/index.ts'], bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022', external: ['cloudflare:workers'] })).outputFiles[0].text;
 }
 async function waitFor(check: () => Promise<boolean>, timeout = 12_000) {
   const until = Date.now() + timeout;
   while (Date.now() < until) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 100)); }
   assert.fail('Durable alarm did not complete within the test deadline.');
 }
-
-test('timer socket diagnostic authenticates fixed empty requests before any DNS or socket work', async () => {
- const registration = btoa('r'.repeat(32)); let dns = 0;
- const mf = new Miniflare({ modules: true, script: await dispatcherBundle(), compatibilityDate: '2026-05-15', cf: false,
-  durableObjects: { ALARMS: { className: 'Alarm', useSQLite: true } },
-  bindings: { REGISTRATION_KEY: registration },
-  outboundService: async request => {
-   assert.equal(new URL(request.url).hostname, 'cloudflare-dns.com'); dns++;
-   return Response.json({ Status: 0, Answer: [] });
-  },
- });
- const path = '/diagnostics/callback-socket', url = 'https://alarm.example' + path;
- try {
-  assert.equal((await mf.dispatchFetch(url, { method: 'POST' })).status, 401);
-  assert.equal((await mf.dispatchFetch(url + '?host=private', { method: 'POST' })).status, 400);
-  assert.equal((await mf.dispatchFetch(url)).status, 400);
-  assert.equal((await mf.dispatchFetch(url, { method: 'POST', body: '{}', headers: await signedHeaders(registration, path, '{}') })).status, 400);
-  assert.equal(dns, 0);
-  const response = await mf.dispatchFetch(url, { method: 'POST', headers: await signedHeaders(registration, path, '') });
-  assert.equal(response.status, 200); assert.equal(dns, 4);
-  const result = await response.json() as { applicationBytesSent: number; callbackContractVerified: boolean; observations: { outcome: string }[] };
-  assert.equal(result.applicationBytesSent, 0); assert.equal(result.callbackContractVerified, false);
-  assert.ok(result.observations.every(x => x.outcome === 'resolution_or_address_policy_failure'));
- } finally { await mf.dispose(); }
-});
 
 test('real SQLite Durable Object alarm survives runtime restart; failed/redirect callback retries and registration is idempotent', async () => {
   const script = await dispatcherBundle(); const persist = mkdtempSync(join(tmpdir(), 'opaque-alarm-'));
@@ -125,13 +100,13 @@ test('Workers E2E: Google sync → encrypted registration → actual alarm → s
     await db.prepare('INSERT INTO calendars VALUES (?, ?, ?, 1, ?)').bind(owner, 'cal', 'Personal', 'grant').run();
     await db.prepare("INSERT INTO watches (id, owner, calendar_id, generation, token_hash, resource_id, expiration, status) VALUES ('watch', ?, 'cal', 'grant', 'hash', 'resource', ?, 'active')").bind(owner, Date.now() + 3600_000).run();
     for(const [principal, count] of [[owner,1],['other',0]] as const) {
-      const catalog = await mf.dispatchFetch('https://site.example/mcp',{method:'POST',headers:{'oai-authenticated-user-id':principal},body:JSON.stringify({jsonrpc:'2.0',id:2,method:'events/list'})});
+      const catalog = await mf.dispatchFetch('https://site.example/mcp',{method:'POST',headers:{'x-authenticated-owner':principal},body:JSON.stringify({jsonrpc:'2.0',id:2,method:'events/list'})});
       assert.equal(((await catalog.json()) as {result:{events:unknown[]}}).result.events.length,count);
     }
-    const status = await (await mf.dispatchFetch('https://site.example/api/status',{headers:{'oai-authenticated-user-id':owner}})).json() as {eventStartReady:boolean};assert.equal(status.eventStartReady,true);
-    const subscribe = await mf.dispatchFetch('https://site.example/mcp', {method:'POST',headers:{'oai-authenticated-user-id':owner,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'events/subscribe',params:{name:'calendar.event.starting',arguments:{calendarId:'cal'},delivery:{mode:'webhook',url:'https://receiver.example/callback',secret:webhookSecret}}})});
+    const status = await (await mf.dispatchFetch('https://site.example/api/status',{headers:{'x-authenticated-owner':owner}})).json() as {eventStartReady:boolean};assert.equal(status.eventStartReady,true);
+    const subscribe = await mf.dispatchFetch('https://site.example/mcp', {method:'POST',headers:{'x-authenticated-owner':owner,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'events/subscribe',params:{name:'calendar.event.starting',arguments:{calendarId:'cal'},delivery:{mode:'webhook',url:'https://receiver.example/callback',secret:webhookSecret}}})});
     const subscribed = await subscribe.json() as {result?:{id:string};error?:unknown}; assert.ok(subscribed.result,JSON.stringify(subscribed));
-    const resync = await mf.dispatchFetch('https://site.example/api/calendars/resync', { method: 'POST', headers: { origin: 'https://site.example', 'oai-authenticated-user-id': owner }, body: JSON.stringify({ calendarId: 'cal' }) });
+    const resync = await mf.dispatchFetch('https://site.example/api/calendars/resync', { method: 'POST', headers: { origin: 'https://site.example', 'x-authenticated-owner': owner }, body: JSON.stringify({ calendarId: 'cal' }) });
     assert.equal(resync.status, 200, await resync.text()); assert.equal(registrationCount, 1);
     // The pending snapshot is not the scheduler's source of truth.
     await db.prepare('DELETE FROM events').run();

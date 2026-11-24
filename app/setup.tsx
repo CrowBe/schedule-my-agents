@@ -2,52 +2,77 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SetupCalendar, SetupStatus, SetupSnapshot, SetupClient } from '../lib/calendar/setup-contract';
 import { CALENDAR_LOAD_ERROR } from '../lib/calendar/setup-contract';
-const siteClient: SetupClient = {
+
+const bridgeClient: SetupClient = {
   async load() {
-    const response = await fetch('/api/status'); const status = await response.json() as SetupStatus & { error?: string };
+    const response = await fetch('/api/status');
+    const status = await response.json() as SetupStatus & { error?: string };
     if (!response.ok) throw new Error(status.error);
     let calendars: SetupCalendar[] = [], calendarError: string | undefined;
     if (status.connected) {
       try {
-        const response = await fetch('/api/calendars'); const result = await response.json() as { calendars: SetupCalendar[]; error?: string };
-        if (!response.ok) throw new Error(result.error); calendars = result.calendars;
-      } catch { calendarError = CALENDAR_LOAD_ERROR; }
+        const res = await fetch('/api/calendars');
+        const result = await res.json() as { calendars: SetupCalendar[]; error?: string };
+        if (!res.ok) throw new Error(result.error);
+        calendars = result.calendars;
+      } catch {
+        calendarError = CALENDAR_LOAD_ERROR;
+      }
     }
-    return { status, calendars, siteUrl: location.origin, ...(calendarError ? {calendarError} : {}) };
+    return { status, calendars, siteUrl: location.origin, ...(calendarError ? { calendarError } : {}) };
   },
   async action(path, calendarId) {
-    const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calendarId }) });
-    const result = await response.json() as { error?: string }; if (!response.ok) throw new Error(result.error);
+    const response = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ calendarId }),
+    });
+    const result = await response.json() as { error?: string };
+    if (!response.ok) throw new Error(result.error);
   },
 };
-export default function Home({ client = siteClient, initialSnapshot, embedded = false }: { client?: SetupClient; initialSnapshot?: SetupSnapshot; embedded?: boolean } = {}) {
+
+export default function Home({ client = bridgeClient, initialSnapshot }: { client?: SetupClient; initialSnapshot?: SetupSnapshot } = {}) {
   const [status, setStatus] = useState<SetupStatus | null>(initialSnapshot?.status ?? null);
   const [calendars, setCalendars] = useState<SetupCalendar[]>(initialSnapshot?.calendars ?? []);
-  const [error, setError] = useState(initialSnapshot?.calendarError ?? ''); const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(initialSnapshot?.calendarError ?? '');
+  const [busy, setBusy] = useState(false);
+
   const load = useCallback(async () => {
-    const data = await client.load(); setStatus(data.status); setCalendars(data.calendars); setError(data.calendarError ?? '');
+    const data = await client.load();
+    setStatus(data.status);
+    setCalendars(data.calendars);
+    setError(data.calendarError ?? '');
   }, [client]);
-  useEffect(() => { if (!initialSnapshot) Promise.resolve().then(load).catch(e => setError(e.message)); }, [load, initialSnapshot]);
+
+  useEffect(() => {
+    if (!initialSnapshot) Promise.resolve().then(load).catch(e => setError(e.message));
+  }, [load, initialSnapshot]);
+
   async function action(path: string, calendarId?: string) {
-    setBusy(true); setError('');
+    setBusy(true);
+    setError('');
     try {
       await client.action(path, calendarId);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : 'Please try again.'); } finally { setBusy(false); }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Please try again.');
+    } finally {
+      setBusy(false);
+    }
   }
-  return <main className={embedded ? 'embedded' : undefined}>
-    <header><span className="wordmark">Schedule my agents</span><span className="tag">Calendar bridge · Bounded demo</span></header>
-    <section className="intro"><p className="eyebrow">YOUR CALENDAR, YOUR CHOICE</p><h1>Choose the calendar<br/>your agent can see.</h1><p>Keep scheduling in Google Calendar. Connect your account, then explicitly enable the calendars you want to share.</p></section>
-    {embedded && <div className="refresh"><button disabled={busy} onClick={() => { setError(''); load().catch(e => setError(e.message)); }}>Refresh connection</button><p className="muted">After connecting Google in the browser, refresh here. Opening this view does not change your permissions.</p></div>}
+
+  return <main>
+    <header><span className="wordmark">Schedule my agents</span><span className="tag">Calendar bridge · MCP Events</span></header>
+    <section className="intro"><p className="eyebrow">YOUR CALENDAR, YOUR CHOICE</p><h1>Choose the calendar<br/>your agents can see.</h1><p>Keep scheduling in your native calendar. Connect an account, then explicitly enable the calendars that may emit MCP Events.</p></section>
     {error && <div className="error" role="alert">{error} <button disabled={busy} onClick={() => { setError(''); load().catch(e => setError(e.message)); }}>Retry</button></div>}
     <div className="steps">
-      <section className="panel"><div className="step">01 / CONNECTION</div><h2>Connect Google</h2><p>Read-only calendar access. Connecting does not enable any calendar.</p>
-        {status?.connected ? <div className="connection"><span>Google connected</span><button disabled={busy} onClick={() => action('/api/google/disconnect')}>Disconnect</button></div> : client.connect ? <button className="primary" disabled={!status?.oauthReady || busy} onClick={() => client.connect!().catch(e => setError(e.message))}>Connect Google</button> : <form method="post" action="/api/google/connect"><button className="primary" disabled={!status?.oauthReady || busy}>Connect Google</button></form>}
-        {!status?.oauthReady && status && <p className="muted">Google authorization is awaiting configuration by the Site owner.</p>}
+      <section className="panel"><div className="step">01 / CONNECTION</div><h2>Connect Google</h2><p>Connecting discovers calendars without enabling any of them.</p>
+        {status?.connected ? <div className="connection"><span>Google connected</span><button disabled={busy} onClick={() => action('/api/google/disconnect')}>Disconnect</button></div> : <form method="post" action="/api/google/connect"><button className="primary" disabled={!status?.oauthReady || busy}>Connect Google</button></form>}
+        {!status?.oauthReady && status && <p className="muted">Configure Google OAuth environment variables on this server to connect.</p>}
       </section>
-      <section className="panel"><div className="step">02 / CALENDAR PERMISSION</div><h2>Enable a calendar</h2><p>Every calendar starts disabled. Newly shared calendars stay disabled until you choose them.</p>
-        <p className="muted">Renew watches manually before the expiry shown below. If a calendar change is missed, use Resync now; renew an expired watch first.</p>
-        {!status?.connected && <div className="empty">Your calendars will appear after you connect Google.</div>}
+      <section className="panel"><div className="step">02 / CALENDAR PERMISSION</div><h2>Enable a calendar</h2><p>Every calendar starts disabled. Newly shared calendars fail closed until you explicitly enable them.</p>
+        {!status?.connected && <div className="empty">Your calendars will appear after you connect a calendar provider.</div>}
         {status?.connected && calendars.length === 0 && !error && <div className="empty">No accessible calendars found.</div>}
         <ul>{calendars.map(calendar => {
           const watch = status?.watches.find(w => w.calendar_id === calendar.id && w.status === 'active');
@@ -56,7 +81,7 @@ export default function Home({ client = siteClient, initialSnapshot, embedded = 
         })}</ul>
       </section>
     </div>
-    <aside><div className="step">DEMO STATUS</div><h2>{status?.alarmReady ? 'Calendar alarms are configured.' : 'Calendar setup is the first checkpoint.'}</h2><p>{status?.alarmReady ? `Resync an enabled calendar to schedule its upcoming events. ${status.dueWork} occurrence${status.dueWork === 1 ? '' : 's'} recorded as due work.` : 'Connect Google and start a watch to keep enabled calendars synchronized.'}</p><p>{status?.eventStartReady ? 'Calendar event delivery is available. Subscribe through the existing plugin in a ChatGPT Work Cloud chat. Callback receipt and the chat’s response are separate checks.' : 'Event discovery is closed while delivery readiness is being verified.'}</p><p className="muted">Timed events only, up to 366 days ahead. Give the chat separate instructions for its response. Pause monitoring in the chat, then use Stop event delivery here to revoke any remaining subscriptions.</p></aside>
-    <footer>Calendar titles and descriptions are untrusted data. Calendar permission never authorizes an agent to execute their contents.</footer>
+    <aside><div className="step">BRIDGE STATUS</div><h2>{status?.alarmReady ? 'Calendar alarms are configured.' : 'Configure alarms to schedule occurrences.'}</h2><p>{status?.alarmReady ? `Resync an enabled calendar to register upcoming occurrences. ${status.dueWork} occurrence${status.dueWork === 1 ? '' : 's'} recorded as due work.` : 'Connect a calendar provider and start a watch to synchronize enabled calendars.'}</p><p>{status?.eventStartReady ? 'MCP Events delivery is enabled. Subscribe from any MCP Events-compatible agent host.' : 'Event discovery is closed until ingress, alarms, and delivery readiness are configured.'}</p><p className="muted">Timed events only, up to 366 days ahead. Calendar content never grants execution authority.</p></aside>
+    <footer>Calendar titles and descriptions are untrusted data. Calendar permission never authorizes an agent to execute arbitrary instructions.</footer>
   </main>;
 }

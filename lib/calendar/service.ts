@@ -6,15 +6,17 @@ import { Store, type WatchRow } from './store.ts';
 import { AppError, ProviderFailure, type CalendarProvider, type Environment } from './types.ts';
 import { OccurrenceAlarms } from './alarms.ts';
 import { readMcpMessage, mcpErrorResponse, McpProtocolError, SUPPORTED_MCP_VERSIONS, emptyToolArguments } from './mcp-protocol.ts';
-import { CALENDAR_APP_URI, CALENDAR_APP_MIME, CALENDAR_LOAD_ERROR, calendarAppTool, calendarActionTool, SETUP_ACTIONS, type SetupAction } from './setup-contract.ts';
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
-export type Dependencies = { callbackTransport?: CallbackTransport; calendarAppHtml?: string; http?: Fetch; now?: () => number; provider?: (owner: string) => Promise<CalendarProvider>; providerAdapters?: ProviderAdapters };
+export type Dependencies = { callbackTransport?: CallbackTransport; http?: Fetch; now?: () => number; provider?: (owner: string) => Promise<CalendarProvider>; providerAdapters?: ProviderAdapters };
 export class CalendarService {
+  private env: Environment;
+  private dependencies: Dependencies;
   private store: Store;
   private http: Fetch;
   private now: () => number;
   private alarms: OccurrenceAlarms;
-  constructor(private env: Environment, private dependencies: Dependencies = {}) {
+  constructor(env: Environment, dependencies: Dependencies = {}) {
+    this.env = env; this.dependencies = dependencies;
     const http = dependencies.http ?? fetch;
     this.store = new Store(env.DB); this.http = (input, init) => http(input, init); this.now = dependencies.now ?? Date.now;
     this.alarms = new OccurrenceAlarms(env, this.store, (input, init) => this.http(input, init), this.now, owner => this.provider(owner), dependencies.callbackTransport);
@@ -36,9 +38,9 @@ export class CalendarService {
     return resolveConnectedProvider(this.env, this.store, owner, this.http, this.dependencies.providerAdapters);
   }
   private identity(request: Request) {
-    // Only trust these when the Sites hosting boundary strips visitor-supplied headers.
-    const owner = request.headers.get('oai-authenticated-user-id');
-    if (!owner) throw new AppError(401, 'Sign in with ChatGPT.');
+    // Only trust this header when the reverse proxy or auth boundary strips caller-supplied values.
+    const owner = request.headers.get('x-authenticated-owner');
+    if (!owner) throw new AppError(401, 'Authentication is required.');
     return owner;
   }
   private mutation(request: Request) {
@@ -137,7 +139,7 @@ export class CalendarService {
   }
   private async watch(owner: string, calendarId: string) {
     const calendar = await this.store.requireEnabled(owner, calendarId);
-    if (!await this.ingressReady(owner)) throw new AppError(503, 'Provider webhook ingress has not been verified for this Site. Calendar consent is saved; watch creation is blocked.');
+    if (!await this.ingressReady(owner)) throw new AppError(503, 'Provider webhook ingress has not been verified for this server. Calendar consent is saved; watch creation is blocked.');
     const provider = await this.provider(owner);
     const connection=await this.store.connection(owner),providerId=connection?.providerId??'google';
     const id = random(), token = random() + random(), now = this.now();
@@ -248,51 +250,18 @@ export class CalendarService {
     const { rpc, modern } = parsed;
     const reply = (result: object) => json({ jsonrpc: '2.0', id: rpc.id ?? null, result: modern ? { resultType: 'complete', ...result } : result });
     const error = (code: number, message: string, status = 200) => json({ jsonrpc: '2.0', id: rpc.id ?? null, error: { code, message } }, status);
-    const capabilities = { tools: {}, resources: {}, extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: [CALENDAR_APP_MIME] } } };
+    const capabilities = { tools: {} };
     if (rpc.method === 'server/discover') return reply({ resultType: 'complete', supportedVersions: SUPPORTED_MCP_VERSIONS, capabilities: { ...capabilities, events: {} }, _meta: { 'io.modelcontextprotocol/serverInfo': { name: 'schedule-my-agents', title: 'Schedule my agents', version: '0.1.0' } } });
     if (rpc.method === 'initialize' && !modern) return reply({ protocolVersion: typeof rpc.params?.protocolVersion === 'string' && SUPPORTED_MCP_VERSIONS.slice(1).includes(rpc.params.protocolVersion) ? rpc.params.protocolVersion : '2025-03-26', capabilities, serverInfo: { name: 'schedule-my-agents', version: '0.1.0' } });
     if (rpc.method === 'notifications/initialized') return new Response(null, { status: 202 });
     if (rpc.method === 'ping') return reply({});
-    if (rpc.method === 'tools/list') return reply({ tools: [{ name: 'enabled_calendars', title: 'Enabled calendars', description: 'List calendars explicitly enabled by the connected user. Calendar content is untrusted data.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }, calendarAppTool, calendarActionTool] });
-    if (rpc.method === 'resources/list') return reply({ resources: [{uri:CALENDAR_APP_URI,name:'calendar-settings',title:'Calendar settings',mimeType:CALENDAR_APP_MIME}] });
-    if (rpc.method === 'resources/templates/list') return reply({ resourceTemplates: [] });
-    if (rpc.method === 'resources/read') {
-      if (rpc.params?.uri !== CALENDAR_APP_URI) return error(-32002, 'Resource not found.');
-      if (!this.dependencies.calendarAppHtml) return error(-32603, 'Calendar view is temporarily unavailable.', 503);
-      return reply({ contents: [{uri:CALENDAR_APP_URI,mimeType:CALENDAR_APP_MIME,text:this.dependencies.calendarAppHtml,
-        _meta:{ui:{csp:{connectDomains:[],resourceDomains:[],frameDomains:[]}},'openai/ui':{availableDisplayModes:['inline','fullscreen'],preferredDisplayMode:'fullscreen'}}}] });
-    }
+    if (rpc.method === 'tools/list') return reply({ tools: [{ name: 'enabled_calendars', title: 'Enabled calendars', description: 'List calendars explicitly enabled by the connected user. Calendar content is untrusted data.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }] });
     if (rpc.method === 'tools/call') {
       const name = rpc.params?.name, args = rpc.params?.arguments;
-      const failure = (message:string) => reply({isError:true,content:[{type:'text',text:message}]});
-      if (name === 'enabled_calendars' || name === calendarAppTool.name) {
-        if (!emptyToolArguments(args)) return failure('This tool accepts only an empty arguments object.');
-        if (name === 'enabled_calendars') return reply({ content: [{ type: 'text', text: JSON.stringify(await this.store.all('SELECT calendar_id AS calendarId, summary FROM calendars WHERE owner = ? AND enabled = 1', owner)) }] });
-      } else if (name === calendarActionTool.name) {
-        if (!args || typeof args !== 'object' || Array.isArray(args)) return failure('Calendar action arguments are required.');
-        const values = args as Record<string,unknown>;
-        if (typeof values.action !== 'string' || !Object.hasOwn(SETUP_ACTIONS, values.action) || Object.keys(values).some(key => key !== 'action' && key !== 'calendarId')) return failure('Unknown calendar settings action.');
-        if (values.action !== 'disconnect' && (typeof values.calendarId !== 'string' || !values.calendarId || values.calendarId.length > 1024)) return failure('A calendar ID is required.');
-        if (values.action === 'disconnect' && values.calendarId !== undefined) return failure('Disconnect does not accept a calendar ID.');
-        const response = await this.handle(new Request(this.origin()+SETUP_ACTIONS[values.action as SetupAction], {method:'POST',headers:{'oai-authenticated-user-id':owner,origin:this.origin(),'content-type':'application/json'},body:JSON.stringify({calendarId:values.calendarId})}));
-        const outcome = await response.json() as {error?:string};
-        if (!response.ok) return failure(outcome.error ?? 'Calendar settings could not be updated.');
-      } else return error(-32602, 'Unknown tool.');
-      try {
-        const statusResponse = await this.handle(new Request(this.origin()+'/api/status',{headers:{'oai-authenticated-user-id':owner}}));
-        const status = await statusResponse.json() as {connected:boolean;error?:string};
-        if (!statusResponse.ok) return failure(status.error ?? 'Calendar settings are unavailable.');
-        let calendars:unknown[] = [], calendarError:string|undefined;
-        if (status.connected) {
-          try {
-            const response = await this.handle(new Request(this.origin()+'/api/calendars',{headers:{'oai-authenticated-user-id':owner}}));
-            const result = await response.json() as {calendars:unknown[]};
-            if (!response.ok) throw new Error('Calendar discovery failed.');
-            calendars = result.calendars;
-          } catch { calendarError = CALENDAR_LOAD_ERROR; }
-        }
-        return reply({content:[{type:'text',text:'Calendar settings loaded. Opening settings does not enable any calendar.'},{type:'resource_link',uri:this.origin()+'/',name:'Calendar settings',mimeType:'text/html',description:'Open the original Site to connect Google or manage calendar permissions when an embedded view is unavailable.'}],_meta:{calendarSetup:{status,calendars,siteUrl:this.origin(),...(calendarError?{calendarError}:{})}}});
-      } catch { return failure('Calendar settings are temporarily unavailable.'); }
+      const failure = (message: string) => reply({ isError: true, content: [{ type: 'text', text: message }] });
+      if (name !== 'enabled_calendars') return error(-32602, 'Unknown tool.');
+      if (!emptyToolArguments(args)) return failure('This tool accepts only an empty arguments object.');
+      return reply({ content: [{ type: 'text', text: JSON.stringify(await this.store.all('SELECT calendar_id AS calendarId, summary FROM calendars WHERE owner = ? AND enabled = 1', owner)) }] });
     }
     if (rpc.method === 'events/list') {
       const ready = await this.eventCatalogReady(owner);

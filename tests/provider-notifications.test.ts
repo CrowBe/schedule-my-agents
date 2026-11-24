@@ -11,7 +11,7 @@ test('provider authorization belongs to the registered adapter and never grants 
   authorization:()=>({configured:true,start:async owner=>{owners.push(owner);return new Response(null,{status:303,headers:{Location:'https://provider.example/authorize'}});},
    complete:async owner=>{owners.push(owner);return Response.json({connected:true});}}),
  }}});
- const request=(path:string,method:string,origin=f.env.SITE_ORIGIN!)=>service.handle(new Request(f.env.SITE_ORIGIN+path,{method,headers:{'oai-authenticated-user-id':'owner',origin},...(method==='POST'?{body:JSON.stringify({owner:'forged'})}:{})}));
+ const request=(path:string,method:string,origin=f.env.SITE_ORIGIN!)=>service.handle(new Request(f.env.SITE_ORIGIN+path,{method,headers:{'x-authenticated-owner':'owner',origin},...(method==='POST'?{body:JSON.stringify({owner:'forged'})}:{})}));
  assert.equal((await request('/api/providers/opaque/connect','POST')).status,303);
  assert.equal((await request('/api/providers/opaque/callback','GET')).status,200);
  assert.equal((await request('/api/providers/opaque/connect','POST','https://foreign.example')).status,403);

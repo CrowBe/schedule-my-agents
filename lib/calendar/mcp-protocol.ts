@@ -1,7 +1,13 @@
 export const SUPPORTED_MCP_VERSIONS = ['2026-07-28', '2025-11-25', '2025-06-18', '2025-03-26'];
 export type McpMessage = { jsonrpc: '2.0'; id?: string | number; method: string; params?: Record<string, unknown> };
 export class McpProtocolError extends Error {
-  constructor(public code: number, message: string, public status = 400, public id: string | number | null = null, public data?: unknown) { super(message); }
+  code: number;
+  status: number;
+  id: string | number | null;
+  data?: unknown;
+  constructor(code: number, message: string, status = 400, id: string | number | null = null, data?: unknown) {
+    super(message); this.code = code; this.status = status; this.id = id; this.data = data;
+  }
 }
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 function decodedHeader(value: string | null, id: string | number | null) {
@@ -14,7 +20,7 @@ function decodedHeader(value: string | null, id: string | number | null) {
 }
 export async function readMcpMessage(request: Request, siteOrigin?: string) {
   const origin = request.headers.get('origin');
-  if (origin && origin !== siteOrigin && origin !== 'https://chatgpt.com') throw new McpProtocolError(-32600, 'Request origin is not allowed.', 403);
+  if (origin && origin !== siteOrigin) throw new McpProtocolError(-32600, 'Request origin is not allowed.', 403);
   let value: unknown;
   try { value = await request.json(); } catch { throw new McpProtocolError(-32700, 'Parse error.'); }
   if (!object(value) || value.jsonrpc !== '2.0' || typeof value.method !== 'string' || !value.method ||

@@ -7,13 +7,13 @@ import { GoogleCalendar, normalize, SCOPES } from '../lib/calendar/google.ts';
 import { open } from '../lib/calendar/crypto.ts';
 import { Store } from '../lib/calendar/store.ts';
 import type { CalendarProvider, Environment, Statement, CalendarEvent } from '../lib/calendar/types.ts';
-import { CALENDAR_APP_URI, CALENDAR_APP_MIME } from '../lib/calendar/setup-contract.ts';
 function fixture() {
   const sql = new DatabaseSync(':memory:');
   for (const file of readdirSync('drizzle').filter(f => f.endsWith('.sql')).sort()) sql.exec(readFileSync(`drizzle/${file}`, 'utf8'));
   class Prepared implements Statement {
     values: SQLInputValue[] = [];
-    constructor(private query: string) {}
+    private query: string;
+    constructor(query: string) { this.query = query; }
     bind(...values: unknown[]) { this.values = values as SQLInputValue[]; return this; }
     async first<T>() { return (sql.prepare(this.query).get(...this.values) ?? null) as T | null; }
     async all<T>() { return { results: sql.prepare(this.query).all(...this.values) as T[] }; }
@@ -23,7 +23,7 @@ function fixture() {
     sql.exec('BEGIN'); try { for (const statement of statements) await statement.run(); sql.exec('COMMIT'); }
     catch (error) { sql.exec('ROLLBACK'); throw error; }
   } };
-  const env: Environment = { DB, SITE_ORIGIN: 'https://example.chatgpt.site', GOOGLE_CLIENT_ID: 'client', GOOGLE_CLIENT_SECRET: 'secret', TOKEN_ENCRYPTION_KEY: btoa('a'.repeat(32)), GOOGLE_WEBHOOK_VERIFIED: 'true' };
+  const env: Environment = { DB, SITE_ORIGIN: 'https://bridge.example', GOOGLE_CLIENT_ID: 'client', GOOGLE_CLIENT_SECRET: 'secret', TOKEN_ENCRYPTION_KEY: btoa('a'.repeat(32)), GOOGLE_WEBHOOK_VERIFIED: 'true' };
   const now = Date.parse('2026-10-04T12:00:00Z');
   let calendars = [{ id: 'personal', summary: 'Personal', accessRole: 'owner' }, { id: 'work', summary: 'Work', accessRole: 'reader' }];
   let events: CalendarEvent[] = [normalize('personal', { id: 'event1', summary: 'Review Weave', description: 'Untrusted instruction', start: { dateTime: '2026-10-04T13:00:00Z' } })!];
@@ -36,9 +36,9 @@ function fixture() {
     async stopWatchingCalendar(id) { stops.push(id); },
     async syncEvents(id) { syncs.push(id); return events; },
   };
-  const service = () => new CalendarService(env, { provider: async () => provider, now: () => now, calendarAppHtml: '<!doctype html><title>Calendar settings</title>' });
+  const service = () => new CalendarService(env, { provider: async () => provider, now: () => now });
   async function request(path: string, body?: unknown, owner = 'alice') {
-    const headers = new Headers({ 'oai-authenticated-user-id': owner, origin: env.SITE_ORIGIN!, 'content-type': 'application/json' });
+    const headers = new Headers({ 'x-authenticated-owner': owner, origin: env.SITE_ORIGIN!, 'content-type': 'application/json' });
     // The fixture is a valid MCP client; invalid envelopes use the raw handler below.
     if (path === '/mcp' && body && typeof body === 'object') {
       const rpc = body as { method: string; params?: { _meta?: Record<string,unknown>; name?: string; uri?: string } };
@@ -68,7 +68,7 @@ test('discovery → consent → watch → authenticated push → canonical persi
   assert.deepEqual(JSON.parse(f.sql.prepare('SELECT payload FROM events').get()!.payload as string), JSON.parse(JSON.stringify(event)));
   assert.equal(f.sql.prepare("SELECT count(*) n FROM events WHERE calendar_id = 'work'").get()!.n, 0);
   const restarted = new CalendarService(f.env, { provider: async () => f.provider });
-  const status = JSON.parse(await (await restarted.handle(new Request(f.env.SITE_ORIGIN + '/api/status', { headers: {'oai-authenticated-user-id': 'alice'} }))).text());
+  const status = JSON.parse(await (await restarted.handle(new Request(f.env.SITE_ORIGIN + '/api/status', { headers: {'x-authenticated-owner': 'alice'} }))).text());
   assert.equal(status.enabled[0].calendar_id, 'personal');
 });
 test('newly shared calendars fail closed; enable requires actual calendar access', async () => {
@@ -99,101 +99,23 @@ test('MCP discovery publishes modern server identity without exposing account da
   assert.equal(typeof discovered.result._meta?.['io.modelcontextprotocol/serverInfo']?.version, 'string');
   assert.equal(discovered.result.serverInfo, undefined);
   assert.ok(discovered.result.supportedVersions.includes('2026-07-28'));
-  assert.deepEqual(discovered.result.capabilities, {tools:{}, resources:{}, extensions:{'io.modelcontextprotocol/ui':{mimeTypes:[CALENDAR_APP_MIME]}}, events:{}});
+  assert.deepEqual(discovered.result.capabilities, {tools:{}, events:{}});
   assert.ok(!JSON.stringify(discovered).includes('personal'));
   assert.ok(!JSON.stringify(discovered).includes('alice'));
   const legacy = JSON.parse(await (await f.request('/mcp', {jsonrpc:'2.0',id:2,method:'initialize',params:{protocolVersion:'2025-03-26'}})).text());
   assert.equal(legacy.result.serverInfo.name, 'schedule-my-agents');
   assert.equal(legacy.result.protocolVersion, '2025-03-26');
 });
-test('optional calendar entrypoint and resource open read-only and hide private data from discovery', async () => {
-  const f = fixture();
-  await f.env.DB!.prepare("INSERT INTO connections (owner,refresh_token,created_at) VALUES ('alice','encrypted',0)").run();
-  const catalog = JSON.parse(await (await f.request('/mcp', {id:1,method:'tools/list'})).text());
-  const tool = catalog.result.tools.find((item:{name:string}) => item.name === 'calendar_setup');
-  assert.equal(tool._meta.ui.resourceUri, CALENDAR_APP_URI);
-  assert.deepEqual(tool._meta.ui.visibility, ['model','app']);
-  assert.deepEqual(tool._meta['openai/ui'].entrypoints, [{type:'thread'}]);
-  assert.deepEqual(catalog.result.tools.find((item:{name:string}) => item.name === 'calendar_setup_action')._meta.ui.visibility,['app']);
-  assert.equal(tool.annotations.readOnlyHint, true);
-  assert.equal(tool.annotations.openWorldHint, false);
-  assert.equal(tool.inputSchema.additionalProperties, false);
-  assert.ok(!JSON.stringify(catalog).includes('encrypted'));
-  assert.ok(!JSON.stringify(catalog).includes('alice'));
-  const before = f.sql.prepare('SELECT * FROM calendars').all();
-  const call = {id:2,method:'tools/call',params:{name:'calendar_setup',arguments:{}}};
-  const alice = JSON.parse(await (await f.request('/mcp', call)).text()).result;
-  assert.equal(alice.structuredContent, undefined);
-  assert.ok(!JSON.stringify(alice.content).includes('Personal'));
-  assert.ok(!JSON.stringify(alice.content).includes('Work'));
-  assert.equal(alice.content[1].type,'resource_link');
-  assert.equal(alice.content[1].uri,f.env.SITE_ORIGIN+'/');
-  assert.equal(alice._meta.calendarSetup.status.connected, true);
-  assert.equal(alice._meta.calendarSetup.calendars.length, 2);
-  assert.ok(alice._meta.calendarSetup.calendars.every((c:{enabled:boolean}) => !c.enabled));
-  const bob = JSON.parse(await (await f.request('/mcp', call, 'bob')).text()).result;
-  assert.equal(bob._meta.calendarSetup.status.connected, false);
-  assert.deepEqual(bob._meta.calendarSetup.calendars, []);
-  assert.deepEqual(f.sql.prepare('SELECT * FROM calendars').all(), before);
-  assert.equal(f.channels.length, 0);
-  const resource = JSON.parse(await (await f.request('/mcp',{id:3,method:'resources/read',params:{uri:CALENDAR_APP_URI}})).text()).result.contents[0];
-  assert.equal(resource.mimeType, CALENDAR_APP_MIME);
-  assert.ok(resource.text.startsWith('<!doctype html>'));
-  assert.deepEqual(resource._meta.ui.csp, {connectDomains:[],resourceDomains:[],frameDomains:[]});
-  assert.equal(resource._meta['openai/ui'].preferredDisplayMode,'fullscreen');
-  assert.ok(!JSON.stringify(resource).includes('alice'));
-  assert.equal(JSON.parse(await (await f.request('/mcp',{id:4,method:'resources/read',params:{uri:'file:///etc/passwd'}})).text()).error.code,-32002);
-});
-test('calendar app actions reuse explicit consent, owner isolation and local revocation', async () => {
-  const f = fixture();
-  await f.env.DB!.prepare("INSERT INTO connections (owner,refresh_token,created_at) VALUES ('alice','encrypted',0)").run();
-  const action = async (action:string,calendarId?:string,owner='alice') => JSON.parse(await (await f.request('/mcp',{id:1,method:'tools/call',params:{name:'calendar_setup_action',arguments:{action,...(calendarId ? {calendarId} : {})}}},owner)).text()).result;
-  assert.equal((await action('watch','personal')).isError,true);
-  assert.equal(f.channels.length,0);
-  const enabled = await action('enable','personal');
-  assert.equal(enabled.structuredContent,undefined);
-  assert.equal(enabled._meta.calendarSetup.calendars.find((c:{id:string}) => c.id==='personal').enabled,true);
-  assert.equal((await action('watch','personal','bob')).isError,true);
-  assert.equal((await action('enable','invented')).isError,true);
-  assert.ok(!(await action('watch','personal')).isError);
-  assert.equal(f.channels.length,1);
-  await action('disable','personal','bob');
-  assert.equal(f.sql.prepare("SELECT enabled FROM calendars WHERE owner='alice' AND calendar_id='personal'").get()!.enabled,1);
-  assert.ok(!(await action('disable','personal')).isError);
-  assert.equal(f.sql.prepare('SELECT count(*) n FROM events').get()!.n,0);
-  assert.equal((await f.webhook()).status,403);
-  assert.ok(!(await action('disconnect')).isError);
-  assert.equal(f.sql.prepare('SELECT count(*) n FROM connections').get()!.n,0);
-  assert.equal(f.sql.prepare('SELECT count(*) n FROM calendars WHERE enabled=1').get()!.n,0);
-});
 test('MCP tool arguments reject undeclared authority before making changes', async () => {
   const f=fixture();
-  for (const [name,args] of [['enabled_calendars',{owner:'bob'}],['calendar_setup',{calendarId:'personal'}],['calendar_setup_action',{action:'enable',calendarId:'personal',owner:'bob'}],['calendar_setup_action',{action:'/api/google/connect'}],['calendar_setup_action',{action:'disconnect',calendarId:'personal'}],['calendar_setup_action',{action:'enable'}]] as const) {
-    const result=JSON.parse(await (await f.request('/mcp',{id:1,method:'tools/call',params:{name,arguments:args}})).text()).result;
-    assert.equal(result.isError,true);
-  }
+  const result=JSON.parse(await (await f.request('/mcp',{id:1,method:'tools/call',params:{name:'enabled_calendars',arguments:{owner:'bob'}}})).text()).result;
+  assert.equal(result.isError,true);
   assert.equal(f.sql.prepare('SELECT count(*) n FROM calendars').get()!.n,0);
   assert.equal(f.channels.length,0);
 });
-test('calendar settings retain disconnect recovery when Google calendar discovery fails', async () => {
-  const f=fixture();
-  await f.env.DB!.prepare("INSERT INTO connections (owner,refresh_token,created_at) VALUES ('alice','encrypted',0)").run();
-  await f.request('/api/calendars/enable',{calendarId:'personal'});
-  f.provider.discoverCalendars=async()=>{throw new Error('private provider failure details');};
-  const opened=JSON.parse(await (await f.request('/mcp',{id:1,method:'tools/call',params:{name:'calendar_setup',arguments:{}}})).text()).result;
-  assert.ok(!opened.isError);
-  assert.equal(opened._meta.calendarSetup.status.connected,true);
-  assert.deepEqual(opened._meta.calendarSetup.calendars,[]);
-  assert.equal(typeof opened._meta.calendarSetup.calendarError,'string');
-  assert.ok(!JSON.stringify(opened).includes('private provider failure details'));
-  const disconnected=JSON.parse(await (await f.request('/mcp',{id:2,method:'tools/call',params:{name:'calendar_setup_action',arguments:{action:'disconnect'}}})).text()).result;
-  assert.equal(disconnected._meta.calendarSetup.status.connected,false);
-  assert.equal(f.sql.prepare('SELECT count(*) n FROM connections').get()!.n,0);
-  assert.equal(f.sql.prepare('SELECT count(*) n FROM calendars WHERE enabled=1').get()!.n,0);
-});
 test('MCP transport returns protocol errors and rejects unavailable HTTP methods', async () => {
   const f=fixture();
-  const headers={'oai-authenticated-user-id':'alice','content-type':'application/json'};
+  const headers={'x-authenticated-owner':'alice','content-type':'application/json'};
   const raw=async (body:string, extra:Record<string,string>={}) => f.service().handle(new Request(f.env.SITE_ORIGIN+'/mcp',{method:'POST',headers:{...headers,...extra},body}));
   const malformed=await raw('{'); assert.equal(malformed.status,400); assert.equal(JSON.parse(await malformed.text()).error.code,-32700);
   const invalid=await raw(JSON.stringify({id:1,method:'tools/list'})); assert.equal(invalid.status,400); assert.equal(JSON.parse(await invalid.text()).error.code,-32600);
@@ -205,10 +127,10 @@ test('MCP transport returns protocol errors and rejects unavailable HTTP methods
   for (const method of ['GET','DELETE']) { const response=await f.service().handle(new Request(f.env.SITE_ORIGIN+'/mcp',{method,headers})); assert.equal(response.status,405); assert.equal(response.headers.get('allow'),'POST'); }
   const unauthenticated=await f.service().handle(new Request(f.env.SITE_ORIGIN+'/mcp',{method:'POST',body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})})); assert.equal(unauthenticated.status,401);
 });
-test('modern MCP result envelopes declare complete for tools, resources and empty results', async () => {
+test('modern MCP result envelopes declare complete for tools and events', async () => {
   const f=fixture();
   const meta={'io.modelcontextprotocol/protocolVersion':'2026-07-28','io.modelcontextprotocol/clientInfo':{name:'test',version:'1'},'io.modelcontextprotocol/clientCapabilities':{}};
-  for (const [method,params] of [['tools/list',{}],['tools/call',{name:'calendar_setup',arguments:{}}],['resources/list',{}],['resources/read',{uri:CALENDAR_APP_URI}],['resources/templates/list',{}],['ping',{}],['events/list',{}]] as const) {
+  for (const [method,params] of [['tools/list',{}],['tools/call',{name:'enabled_calendars',arguments:{}}],['ping',{}],['events/list',{}]] as const) {
     const response=await f.request('/mcp',{id:1,method,params:{...params,_meta:meta}});
     assert.equal(response.status,200);
     const result=JSON.parse(await response.text()).result;
@@ -281,7 +203,7 @@ test('unverified hosted ingress and event-start delivery fail closed', async () 
 test('CSRF and missing identity are rejected', async () => {
   const f=fixture();
   assert.equal((await f.request('/api/status',undefined,'')).status,401);
-  assert.equal((await f.service().handle(new Request(f.env.SITE_ORIGIN+'/api/calendars/enable',{method:'POST',headers:{origin:'https://evil.example','oai-authenticated-user-id':'alice'},body:JSON.stringify({calendarId:'personal'})}))).status,403);
+  assert.equal((await f.service().handle(new Request(f.env.SITE_ORIGIN+'/api/calendars/enable',{method:'POST',headers:{origin:'https://evil.example','x-authenticated-owner':'alice'},body:JSON.stringify({calendarId:'personal'})}))).status,403);
 });
 test('OAuth PKCE, encrypted offline token, cookie/principal binding and replay rejection', async () => {
   const f=fixture(); let exchange=0;
@@ -289,10 +211,10 @@ test('OAuth PKCE, encrypted offline token, cookie/principal binding and replay r
     const body=init!.body as URLSearchParams; assert.ok(body.get('code_verifier')); assert.equal(body.get('client_secret'),'secret'); exchange++;
     return Response.json({access_token:'access',refresh_token:'refresh-private',scope:SCOPES.join(' ')});
   }});
-  const connected=await service.handle(new Request(f.env.SITE_ORIGIN+'/api/google/connect',{method:'POST',headers:{origin:f.env.SITE_ORIGIN!,'oai-authenticated-user-id':'alice'}}));
+  const connected=await service.handle(new Request(f.env.SITE_ORIGIN+'/api/google/connect',{method:'POST',headers:{origin:f.env.SITE_ORIGIN!,'x-authenticated-owner':'alice'}}));
   const location = new URL(connected.headers.get('location')!); assert.equal(location.searchParams.get('code_challenge_method'),'S256');
   const state=location.searchParams.get('state')!;
-  const callback=(owner='alice',cookie=state) => service.handle(new Request(f.env.SITE_ORIGIN+`/api/google/callback?state=${state}&code=code`,{headers:{'oai-authenticated-user-id':owner,cookie:`calendar_oauth=${cookie}`}}));
+  const callback=(owner='alice',cookie=state) => service.handle(new Request(f.env.SITE_ORIGIN+`/api/google/callback?state=${state}&code=code`,{headers:{'x-authenticated-owner':owner,cookie:`calendar_oauth=${cookie}`}}));
   assert.equal((await callback('bob')).status,400); assert.equal((await callback('alice','wrong')).status,400); assert.equal(exchange,0);
   assert.equal((await callback()).status,303); assert.equal((await callback()).status,400); assert.equal(exchange,1);
   const encrypted=f.sql.prepare('SELECT refresh_token FROM connections').get()!.refresh_token as string;
@@ -301,7 +223,7 @@ test('OAuth PKCE, encrypted offline token, cookie/principal binding and replay r
 test('disconnect revokes local data even if provider credentials no longer work',async()=>{
   const f=fixture(); await f.request('/api/calendars/enable',{calendarId:'personal'}); await f.request('/api/calendars/watch',{calendarId:'personal'});
   const service=new CalendarService(f.env,{provider:async()=>{throw new Error('revoked');},now:()=>f.now});
-  const result=await service.handle(new Request(f.env.SITE_ORIGIN+'/api/google/disconnect',{method:'POST',headers:{origin:f.env.SITE_ORIGIN!,'oai-authenticated-user-id':'alice'}}));
+  const result=await service.handle(new Request(f.env.SITE_ORIGIN+'/api/google/disconnect',{method:'POST',headers:{origin:f.env.SITE_ORIGIN!,'x-authenticated-owner':'alice'}}));
   assert.equal(result.status,200); assert.equal((await f.webhook()).status,403); assert.equal(f.sql.prepare('SELECT count(*) n FROM calendars').get()!.n,0);
 });
 test('Google adapter follows pagination, expands recurrence and limits stored fields',async()=>{
@@ -342,7 +264,7 @@ test('explicit recovery requires current owner, origin, grant and unexpired watc
   assert.equal((await f.request('/api/calendars/resync', { calendarId: 'personal' }, 'bob')).status, 403);
   assert.equal((await f.request('/api/calendars/resync', { calendarId: 'personal' }, '')).status, 401);
   assert.equal((await f.service().handle(new Request(f.env.SITE_ORIGIN + '/api/calendars/resync', {
-    method: 'POST', headers: { origin: 'https://evil.example', 'oai-authenticated-user-id': 'alice' }, body: JSON.stringify({ calendarId: 'personal' }),
+    method: 'POST', headers: { origin: 'https://evil.example', 'x-authenticated-owner': 'alice' }, body: JSON.stringify({ calendarId: 'personal' }),
   }))).status, 403);
   f.sql.prepare('UPDATE watches SET expiration = ?').run(f.now - 1);
   assert.equal((await f.request('/api/calendars/resync', { calendarId: 'personal' })).status, 409);

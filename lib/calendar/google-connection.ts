@@ -15,7 +15,14 @@ export function googleConnection(env: Environment, http: Fetch, store:Store) {
 }
 
 export class GoogleAuthorization {
-  constructor(private env:Environment,private store:Store,private http:Fetch,private now:()=>number,private origin:()=>string) {}
+  private env: Environment;
+  private store: Store;
+  private http: Fetch;
+  private now: () => number;
+  private origin: () => string;
+  constructor(env: Environment, store: Store, http: Fetch, now: () => number, origin: () => string) {
+    this.env = env; this.store = store; this.http = http; this.now = now; this.origin = origin;
+  }
   get configured() {return Boolean(this.env.GOOGLE_CLIENT_ID&&this.env.GOOGLE_CLIENT_SECRET&&this.env.TOKEN_ENCRYPTION_KEY&&this.env.SITE_ORIGIN);}
   async start(owner:string) {
         if (!this.env.GOOGLE_CLIENT_ID || !this.env.GOOGLE_CLIENT_SECRET || !this.env.TOKEN_ENCRYPTION_KEY) throw new AppError(503, 'Google OAuth is not configured.');

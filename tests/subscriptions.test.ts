@@ -11,7 +11,9 @@ function fixture() {
   const sql = new DatabaseSync(':memory:');
   for (const f of readdirSync('drizzle').filter(f => f.endsWith('.sql')).sort()) sql.exec(readFileSync('drizzle/'+f,'utf8'));
   class Prepared implements Statement {
-    values: SQLInputValue[] = []; constructor(private query: string) {}
+    values: SQLInputValue[] = [];
+    private query: string;
+    constructor(query: string) { this.query = query; }
     bind(...v: unknown[]) { this.values=v as SQLInputValue[]; return this; }
     async first<T>() { return (sql.prepare(this.query).get(...this.values) ?? null) as T | null; }
     async all<T>() { return {results:sql.prepare(this.query).all(...this.values) as T[]}; }
