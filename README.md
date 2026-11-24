@@ -4,21 +4,18 @@
 
 Read [STRATEGY.md](STRATEGY.md) for the approved project vision and accept/resist criteria.
 
-## Current state vs. vision
+## Implemented E2E MVP
 
-Implemented foundation:
-- Provider-neutral calendar adapter boundary (`lib/calendar/providers.ts`) with a Google Calendar adapter (`lib/calendar/google.ts`, `lib/calendar/google-connection.ts`).
-- Explicit calendar authorization: connecting discovers calendars without enabling them; watches, sync cursors, alarms, receipts, and subscriptions bind to owner, connection identity, calendar grant, and consent generation.
-- Opaque Cloudflare Durable Object alarm dispatcher (`dispatcher/`) for durable timed wakes with a five-minute late window and provider revalidation at wake time.
-- Fail-closed single-user authentication (`lib/calendar/auth.ts`): a signed admin session or admin bearer secret for `/api/*`, and a separate MCP bearer token for `POST /mcp`.
-- Host-agnostic MCP Events endpoint (`POST /mcp`) supporting `server/discover`, `initialize`, `tools/list`, `tools/call` (`enabled_calendars`), `events/list`, `events/subscribe`, and `events/unsubscribe` with persisted subscriptions, signed challenges, and a signed retry outbox over validated-IP direct TLS (`tls-client/`).
+- **Provider-neutral calendar adapter boundary** (`lib/calendar/providers.ts`) with a Google Calendar adapter (`lib/calendar/google.ts`, `lib/calendar/google-connection.ts`) and an opaque second test adapter.
+- **Explicit calendar authorization**: connecting discovers calendars without enabling any of them; watches, sync cursors, alarms, invitations, receipts, and subscriptions bind to owner, connection identity, calendar grant, and consent generation.
+- **Multi-agent guest email aliases & two-phase MCP Events**: register dedicated agent email aliases (`/api/agents/add`, `agent_aliases` tool) and add one or more agents as native calendar guests; each agent receives independent signed deliveries for onboarding (`calendar.event.invited`) and timed execution (`calendar.event.starting`) at start time or a declared `leadTimeMinutes` offset (0–1440).
+- **External invite allowlist & owner approval gate**: only the owner and allowlisted organizers (`/api/allowlist/add`) may invite an agent alias; unallowlisted organizers are blocked at the integration layer, and allowlisted external invites require explicit owner approval (`/api/invitations/approve`) before `calendar.event.starting` or write-back executes.
+- **Structured event provenance & opt-in narrow write-back**: canonical event payloads carry raw title/description alongside structured organizer/approval provenance; per-calendar opt-in write-back (`POST /api/calendars/write-back`, default off) exposes narrowly scoped `calendar_rsvp` and `calendar_run_note` MCP tools.
+- **Opaque durable alarm dispatcher & unattended maintenance**: `dispatcher/` persists encrypted timed wakes with a five-minute late window and live provider revalidation at wake time; `CalendarMaintenance` (`lib/calendar/maintenance.ts`) runs on a `*/15 * * * *` cron trigger (and `POST /api/maintenance/run`) to renew owner-started watches within 24 hours of expiry, converge missed pushes every 15 minutes, and prune expired state.
+- **Fail-closed single-user self-hosted auth** (`lib/calendar/auth.ts`): signed 24-hour `sma_session` cookie or `ADMIN_SECRET` bearer for `/api/*`, and a strictly separate `MCP_AUTH_TOKEN` bearer for `POST /mcp`.
+- **Host-agnostic MCP Events endpoint** (`POST /mcp`): `server/discover`, `initialize`, `tools/list`, `tools/call` (`enabled_calendars`, `agent_aliases`, `calendar_rsvp`, `calendar_run_note`), `events/list`, `events/subscribe`, and `events/unsubscribe` with persisted subscriptions, signed challenges, and a signed retry outbox over validated-IP direct TLS (`tls-client/`).
 
-Not yet built toward [STRATEGY.md](STRATEGY.md):
-- Adding one or more agents via native guest email aliases and routing independent deliveries per agent.
-- Two-phase MCP Events lifecycle (immediate invitation event for agent-side task onboarding plus timed start or lead-time occurrence triggers).
-- Owner-configured allowlist blocking unallowlisted external invite organizers at the integration layer.
-- Structured event provenance in canonical payloads and extensible owner-authorized write-back (RSVP and brief run-status notes).
-- Wiring `CalendarMaintenance` (`lib/calendar/maintenance.ts`) into `CalendarService.runMaintenance` so the 15-minute cron trigger performs unattended watch renewal and missed-push convergence.
+Live hosted verification against production Cloudflare Workers, Google Calendar, and an external MCP Events host remains separate from local/fake-provider automated checks.
 
 ## Local development
 

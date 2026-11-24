@@ -16,7 +16,7 @@ test('Workers/D1 revocation races during provider revalidation prevent signed di
     const lookup=new Promise<void>(r=>arrived=r), blocked=new Promise<void>(r=>release=r);
     let fixtureNow=Date.now(),dueAt=fixtureNow+5000;
     const event={id:'one',summary:'Synthetic race test',start:{dateTime:new Date(dueAt).toISOString()},status:'confirmed'};
-    const mf=new Miniflare({modules:true,script,compatibilityDate:'2026-05-15',cf:false,d1Databases:{DB:'race-'+action},bindings:{SITE_ORIGIN:'https://site.example',TOKEN_ENCRYPTION_KEY:encryption,GOOGLE_CLIENT_ID:'client',GOOGLE_CLIENT_SECRET:'secret',DISPATCHER_ORIGIN:'https://alarm.example',ALARM_ENCRYPTION_KEY:encryption,ALARM_REGISTRATION_KEY:registration,ALARM_CALLBACK_KEY:callback},outboundService:async(request)=>{
+    const mf=new Miniflare({modules:true,script,compatibilityDate:'2026-05-15',cf:false,d1Databases:{DB:'race-'+action},bindings:{SITE_ORIGIN:'https://site.example',TRUST_PROXY_AUTH_HEADER:'true',TOKEN_ENCRYPTION_KEY:encryption,GOOGLE_CLIENT_ID:'client',GOOGLE_CLIENT_SECRET:'secret',DISPATCHER_ORIGIN:'https://alarm.example',ALARM_ENCRYPTION_KEY:encryption,ALARM_REGISTRATION_KEY:registration,ALARM_CALLBACK_KEY:callback},outboundService:async(request)=>{
       const url=new URL(request.url);
       if(url.origin==='https://receiver.example'){const data=JSON.parse(await request.text());if(data.type==='verification')return Response.json({challenge:data.challenge});delivered++;return new Response(null,{status:503});}
       if(url.origin==='https://alarm.example'){job=await request.json() as AlarmJob;return Response.json({registered:true,id:job.id});}

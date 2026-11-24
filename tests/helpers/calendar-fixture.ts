@@ -25,7 +25,7 @@ export function calendarFixture(kind: 'google' | 'opaque') {
   catch (error) { sql.exec('ROLLBACK'); throw error; }
  } };
  let now = Date.parse('2026-10-13T02:00:00Z');
- const env: Environment = { DB, SITE_ORIGIN: 'https://site.example', DISPATCHER_ORIGIN: 'https://alarm.example',
+ const env: Environment = { DB, SITE_ORIGIN: 'https://site.example', DISPATCHER_ORIGIN: 'https://alarm.example', TRUST_PROXY_AUTH_HEADER: 'true',
   TOKEN_ENCRYPTION_KEY: btoa('t'.repeat(32)), ALARM_ENCRYPTION_KEY: btoa('e'.repeat(32)), ALARM_CALLBACK_KEY: btoa('c'.repeat(32)), ALARM_REGISTRATION_KEY: btoa('r'.repeat(32)) };
  sql.prepare('INSERT INTO connections (owner,refresh_token,created_at,provider_id,connection_id) VALUES (?,?,?,?,?)').run('owner', 'encrypted', now, kind, `connection-${kind}`);
  sql.prepare('INSERT INTO calendars (owner, calendar_id, summary, enabled, generation) VALUES (?,?,?,1,?)').run('owner', 'calendar', 'Test', 'grant');

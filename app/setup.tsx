@@ -152,7 +152,7 @@ export default function Home({ client = bridgeClient, initialSnapshot, initialSe
         <form className="inline-form" onSubmit={submit('/api/agents/add', ['email', 'label'])} aria-label="Add agent alias">
           <input name="email" type="email" required placeholder="agent+research@example.com" aria-label="Agent alias email" data-testid="alias-email-input" />
           <input name="label" type="text" maxLength={80} placeholder="Label (optional)" aria-label="Agent alias label" data-testid="alias-label-input" />
-          <button type="submit" disabled={busy || !status?.connected} data-testid="alias-add">Add alias</button>
+          <button type="submit" disabled={busy || !status} data-testid="alias-add">Add alias</button>
         </form>
         {aliases.length === 0 ? <div className="empty">No agent aliases yet.</div> : <ul>{aliases.map(alias => <li key={alias.email} data-testid="alias-row">
           <div className="calendar-main"><strong>{alias.label || alias.email}</strong>{alias.label && <span className="muted">{alias.email}</span>}</div>
@@ -164,7 +164,7 @@ export default function Home({ client = bridgeClient, initialSnapshot, initialSe
         <p>Only you and allowlisted organizers can invite an agent alias. Unallowlisted invites are blocked before reaching any agent.</p>
         <form className="inline-form" onSubmit={submit('/api/allowlist/add', ['email'])} aria-label="Add allowlisted organizer">
           <input name="email" type="email" required placeholder="colleague@example.com" aria-label="Organizer email" data-testid="allowlist-email-input" />
-          <button type="submit" disabled={busy || !status?.connected} data-testid="allowlist-add">Allow organizer</button>
+          <button type="submit" disabled={busy || !status} data-testid="allowlist-add">Allow organizer</button>
         </form>
         {allowlist.length === 0 ? <div className="empty">No external organizers are allowed.</div> : <ul>{allowlist.map(entry => <li key={entry.email} data-testid="allowlist-row">
           <span className="calendar-main">{entry.email}</span>

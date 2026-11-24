@@ -28,17 +28,21 @@ export class CalendarMaintenance {
   private deps: MaintenanceDependencies;
   constructor(deps: MaintenanceDependencies) { this.deps = deps; }
 
-  async run(): Promise<MaintenanceSummary> {
+  async run(owner?: string): Promise<MaintenanceSummary> {
     const summary: MaintenanceSummary = { checkedAt: this.deps.now(), watchesRenewed: 0, calendarsConverged: 0, cleanedUp: 0, failures: 0 };
     try {
-      summary.cleanedUp = await this.cleanup();
+      summary.cleanedUp = await this.cleanup(owner);
     } catch (error) {
       summary.failures++;
       console.warn('calendar_maintenance_failed', { stage: 'cleanup', name: error instanceof Error ? error.name : 'unknown' });
     }
     // Only explicitly enabled calendars on a live connection. Discovery grants nothing.
-    const grants = await this.deps.store.all<Grant>(`SELECT c.owner, c.calendar_id, c.generation FROM calendars c JOIN connections n ON n.owner = c.owner
-      WHERE c.enabled = 1 ORDER BY c.owner, c.calendar_id LIMIT ?`, this.deps.maxPerTick ?? DEFAULT_MAX_PER_TICK);
+    const limit = this.deps.maxPerTick ?? DEFAULT_MAX_PER_TICK;
+    const grants = owner
+      ? await this.deps.store.all<Grant>(`SELECT c.owner, c.calendar_id, c.generation FROM calendars c JOIN connections n ON n.owner = c.owner
+          WHERE c.enabled = 1 AND c.owner = ? ORDER BY c.calendar_id LIMIT ?`, owner, limit)
+      : await this.deps.store.all<Grant>(`SELECT c.owner, c.calendar_id, c.generation FROM calendars c JOIN connections n ON n.owner = c.owner
+          WHERE c.enabled = 1 ORDER BY c.owner, c.calendar_id LIMIT ?`, limit);
     for (const grant of grants) {
       try {
         const outcome = await this.maintain(grant);
@@ -80,15 +84,17 @@ export class CalendarMaintenance {
       WHERE c.owner = ? AND c.calendar_id = ? AND c.enabled = 1 AND c.generation = ?`, grant.owner, grant.calendar_id, grant.generation));
   }
 
-  private async cleanup() {
+  private async cleanup(owner?: string) {
     const { store } = this.deps, now = this.deps.now();
-    const states = await store.all('DELETE FROM oauth_states WHERE expires_at <= ? RETURNING state', now);
-    const attempts = await store.all('DELETE FROM subscription_attempts WHERE expires_at <= ? RETURNING id', now);
-    const expired = await store.first<{ count: number }>('SELECT count(*) AS count FROM subscriptions WHERE expires_at <= ?', now);
+    const filter = owner ? 'expires_at <= ? AND owner = ?' : 'expires_at <= ?';
+    const args = owner ? [now, owner] : [now];
+    const states = await store.all(`DELETE FROM oauth_states WHERE ${filter} RETURNING state`, ...args);
+    const attempts = await store.all(`DELETE FROM subscription_attempts WHERE ${filter} RETURNING id`, ...args);
+    const expired = await store.first<{ count: number }>(`SELECT count(*) AS count FROM subscriptions WHERE ${filter}`, ...args);
     // Accepted receipts stay as delivery evidence; unsent work for a lapsed subscription is dropped with it.
     await store.batch([
-      store.statement("DELETE FROM deliveries WHERE status != 'accepted' AND subscription_id IN (SELECT id FROM subscriptions WHERE expires_at <= ?)", now),
-      store.statement('DELETE FROM subscriptions WHERE expires_at <= ?', now),
+      store.statement(`DELETE FROM deliveries WHERE status != 'accepted' AND subscription_id IN (SELECT id FROM subscriptions WHERE ${filter})`, ...args),
+      store.statement(`DELETE FROM subscriptions WHERE ${filter}`, ...args),
     ]);
     return states.length + attempts.length + (expired?.count ?? 0);
   }

@@ -20,11 +20,8 @@ export default {
   async scheduled(_controller: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
     let service: CalendarService;
     try { service = new CalendarService(env, { callbackTransport: directCallbackTransport }); } catch { return; }
-    // Activates once CalendarService exposes unattended maintenance.
-    if ('runMaintenance' in service && typeof service.runMaintenance === 'function') {
-      ctx.waitUntil(Promise.resolve(service.runMaintenance()).catch(error => {
-        console.error('calendar_maintenance_failed', { stage: 'scheduled', name: error instanceof Error ? error.name : 'unknown' });
-      }));
-    }
+    ctx.waitUntil(service.runMaintenance().catch(error => {
+      console.error('calendar_maintenance_failed', { stage: 'scheduled', name: error instanceof Error ? error.name : 'unknown' });
+    }));
   },
 };

@@ -82,8 +82,8 @@ export class OccurrenceAlarms {
       ...(receipt.provider_id !== 'google' ? { provider: receipt.provider_id } : {}), invitationReceiptId: receipt.id,
     }, receipt.due_at);
   }
-  async seed(owner: string, calendarId: string, generation: string, provider: CalendarProvider, source: AuditSource = {}) {
-    if (!this.configured) return;
+  async seed(owner: string, calendarId: string, generation: string, provider: CalendarProvider, source: AuditSource = {}): Promise<CalendarEvent[]> {
+    if (!this.configured) return [];
     if (!provider.alarmCandidates) throw new AppError(503, 'Provider alarm discovery is unavailable.');
     const connection = await this.store.connection(owner);
     if (!connection) throw new AppError(403,'Calendar connection was revoked.');
@@ -100,6 +100,7 @@ export class OccurrenceAlarms {
         if (candidate) await this.register(owner, calendarId, generation, candidate, source, connection.id, leadTime);
       }
     }
+    return candidates;
   }
   private log(id: string, outcome: string, dueAt: number) {
     console.info('occurrence_wake', { alarmTag: id.slice(0, 12), outcome, latenessMs: this.now() - dueAt });

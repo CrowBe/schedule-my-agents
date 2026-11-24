@@ -1,4 +1,6 @@
 import { Subscriptions, SubscriptionError, eventDefinitions, type CallbackTransport } from './subscriptions.ts';
+import { authenticateApi, authenticateMcp, handleAuthRoute, siteOrigin } from './auth.ts';
+import { CalendarMaintenance } from './maintenance.ts';
 import { digest, random } from './crypto.ts';
 import { type Fetch } from './google.ts';
 import { resolveConnectedProvider, registeredAdapter, type ProviderAdapters } from './providers.ts';
@@ -63,20 +65,12 @@ export class CalendarService {
   }
   private async eventCatalogReady(owner:string) { return this.env.MCP_EVENTS_READY === 'true' && this.alarms.configured && Boolean(this.dependencies.callbackTransport) && await this.ingressReady(owner); }
   private origin() {
-    if (!this.env.SITE_ORIGIN) throw new AppError(503, 'Site origin is not configured.');
-    const url = new URL(this.env.SITE_ORIGIN);
-    if (url.protocol !== 'https:' || url.pathname !== '/' || url.username || url.password || url.search || url.hash) throw new AppError(503, 'Site origin must be an HTTPS origin.');
-    return url.origin;
+    try { return siteOrigin(this.env); }
+    catch (error) { throw new AppError(503, error instanceof Error ? error.message : 'Site origin is not configured.'); }
   }
   private async provider(owner: string) {
     if (this.dependencies.provider) return this.dependencies.provider(owner);
     return resolveConnectedProvider(this.env, this.store, owner, this.http, this.dependencies.providerAdapters);
-  }
-  private identity(request: Request) {
-    // Only trust this header when the reverse proxy or auth boundary strips caller-supplied values.
-    const owner = request.headers.get('x-authenticated-owner');
-    if (!owner) throw new AppError(401, 'Authentication is required.');
-    return owner;
   }
   private mutation(request: Request) {
     if (request.headers.get('origin') !== this.origin()) throw new AppError(403, 'Request origin is not allowed.');
@@ -88,7 +82,10 @@ export class CalendarService {
       const providerHook=path.match(/^\/api\/providers\/([a-z][a-z0-9_-]{0,63})\/webhook$/);
       if (providerHook && request.method === 'POST') return await this.webhook(request,providerHook[1]);
       if (path === '/api/alarms/wake' && request.method === 'POST') return await this.alarms.wake(request);
-      const owner = this.identity(request);
+      const auth = await handleAuthRoute(request, this.env, this.now(), () => this.origin());
+      if (auth) return auth;
+      const owner = path === '/mcp' ? await authenticateMcp(request, this.env) : await authenticateApi(request, this.env, this.now());
+      if (!owner) return Response.json({ error: 'Authentication is required.' }, { status: 401, headers: { 'Cache-Control': 'no-store', ...(path === '/mcp' ? { 'WWW-Authenticate': 'Bearer' } : {}) } });
       if (path === '/mcp') return request.method === 'POST' ? await this.mcp(request, owner) : new Response(null, {status:405,headers:{Allow:'POST'}});
       if (path === '/api/status' && request.method === 'GET') {
         const connection = await this.store.connection(owner);
@@ -197,6 +194,10 @@ export class CalendarService {
         await this.store.revokeSubscriptions(owner, await this.calendarId(request));
         return json({ subscriptions: 0 });
       }
+      if (path === '/api/maintenance/run' && request.method === 'POST') {
+        this.mutation(request);
+        return json(await this.runMaintenance(owner));
+      }
       throw new AppError(404, 'Route not found.');
     } catch (error) {
       if(error instanceof ProviderFailure) return Response.json({error:error.message,providerOutcome:error.kind},{status:error.status,headers:{'Cache-Control':'no-store',...(error.kind==='transient'&&error.retryAfter?{'Retry-After':error.retryAfter}:{})}});
@@ -236,6 +237,15 @@ export class CalendarService {
   }
   public async syncWatchForMaintenance(watch: WatchRow) {
     await this.sync(watch);
+  }
+  public async runMaintenance(owner?: string) {
+    return new CalendarMaintenance({
+      store: this.store,
+      now: this.now,
+      ingressReady: current => this.ingressReady(current),
+      renewWatch: (current, calendarId) => this.renewWatchForMaintenance(current, calendarId),
+      syncWatch: watch => this.syncWatchForMaintenance(watch),
+    }).run(owner);
   }
   private async watch(owner: string, calendarId: string) {
     const calendar = await this.store.requireEnabled(owner, calendarId);
@@ -316,7 +326,18 @@ export class CalendarService {
       await requireLock();
       if (connection) await this.discoverInvitations(watch, connection, accepted, lockUntil);
       await requireLock();
-      await this.alarms.seed(watch.owner, watch.calendar_id, watch.generation, calendarProvider, { channelTag: (await digest(watch.id)).slice(0, 12), ...(messageNumber ? { messageNumber } : {}) });
+      const seeded = await this.alarms.seed(watch.owner, watch.calendar_id, watch.generation, calendarProvider, { channelTag: (await digest(watch.id)).slice(0, 12), ...(messageNumber ? { messageNumber } : {}) });
+      if (connection && seeded.length) {
+        const seen = new Set(events.map(event => event.providerEventId));
+        const beyondSnapshot = seeded.filter(event => !seen.has(event.providerEventId) && event.calendarId === watch.calendar_id &&
+          event.provider === connection.providerId && event.status !== 'cancelled' && Date.parse(event.start) >= this.now())
+          .map(event => ({ event, source: organizer(event, connection.ownerEmail ?? null, calendar.owner_calendar === 1, allowed) }))
+          .filter(({ source }) => source.kind !== 'blocked');
+        if (beyondSnapshot.length) {
+          await requireLock();
+          await this.discoverInvitations(watch, connection, beyondSnapshot, lockUntil);
+        }
+      }
       if (messageNumber) await this.store.run('UPDATE watches SET last_message = ? WHERE id = ? AND sync_until = ? AND sync_until > ?', messageNumber, watch.id, lockUntil, this.now());
       await requireLock();
       console.info('calendar_snapshot_synced', { channelTag: (await digest(watch.id)).slice(0, 12), occurrences: events.length });

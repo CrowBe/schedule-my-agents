@@ -41,7 +41,7 @@ test(`Workers OAuth and discovery: ${scenario}`, async () => {
       return fetch(request.url,options);
     },
     d1Databases: { DB: 'calendar-test' },
-    bindings: { SITE_ORIGIN: origin, GOOGLE_CLIENT_ID: 'client', GOOGLE_CLIENT_SECRET: 'secret', TOKEN_ENCRYPTION_KEY: btoa('a'.repeat(32)) },
+    bindings: { SITE_ORIGIN: origin, TRUST_PROXY_AUTH_HEADER: 'true', GOOGLE_CLIENT_ID: 'client', GOOGLE_CLIENT_SECRET: 'secret', TOKEN_ENCRYPTION_KEY: btoa('a'.repeat(32)) },
   });
   try {
     const db = await mf.getD1Database('DB');
@@ -115,7 +115,7 @@ test('Workers E2E: OAuth, consent, push create/edit/cancel, failure recovery and
   const origin = 'https://bridge.example';
   const mf = new Miniflare({ modules: true, script: outputFiles[0].text,
     compatibilityDate: '2026-05-15', compatibilityFlags: ['nodejs_compat'], cf: false, outboundService,
-    d1Databases: { DB: 'full-flow' }, bindings: { SITE_ORIGIN: origin, GOOGLE_CLIENT_ID: 'client',
+    d1Databases: { DB: 'full-flow' }, bindings: { SITE_ORIGIN: origin, TRUST_PROXY_AUTH_HEADER: 'true', GOOGLE_CLIENT_ID: 'client',
       GOOGLE_CLIENT_SECRET: 'secret', TOKEN_ENCRYPTION_KEY: btoa('a'.repeat(32)), GOOGLE_WEBHOOK_VERIFIED: 'true' } });
   try {
     const db = await mf.getD1Database('DB');
@@ -187,7 +187,7 @@ test('Workers MCP subscription lifecycle with test-only callback transport and r
       }};`, resolveDir: process.cwd(), sourcefile: 'subscription-worker.ts' },
     bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022',
   });
-  const mf = new Miniflare({ modules:true, script:outputFiles[0].text, compatibilityDate:'2026-05-15', compatibilityFlags:['nodejs_compat'], cf:false, d1Databases:{DB:'subscription-test'}, bindings:{TOKEN_ENCRYPTION_KEY:btoa('a'.repeat(32))} });
+  const mf = new Miniflare({ modules:true, script:outputFiles[0].text, compatibilityDate:'2026-05-15', compatibilityFlags:['nodejs_compat'], cf:false, d1Databases:{DB:'subscription-test'}, bindings:{TRUST_PROXY_AUTH_HEADER:'true', TOKEN_ENCRYPTION_KEY:btoa('a'.repeat(32))} });
   try {
     const db=await mf.getD1Database('DB');
     for(const file of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort()) for(const statement of readFileSync('drizzle/'+file,'utf8').split('--> statement-breakpoint').filter(s=>s.trim())) await db.prepare(statement).run();
@@ -200,7 +200,7 @@ test('Workers MCP subscription lifecycle with test-only callback transport and r
     };
     assert.equal((await rpc('events/subscribe','alice',false)).error?.data?.reason,'transport_unavailable');
     const first=await rpc('events/subscribe'); assert.ok(first.result?.id,JSON.stringify(first));
-    await mf.setOptions({ modules:true, script:outputFiles[0].text, compatibilityDate:'2026-05-15', compatibilityFlags:['nodejs_compat'], cf:false, d1Databases:{DB:'subscription-test'}, bindings:{TOKEN_ENCRYPTION_KEY:btoa('a'.repeat(32))} });
+    await mf.setOptions({ modules:true, script:outputFiles[0].text, compatibilityDate:'2026-05-15', compatibilityFlags:['nodejs_compat'], cf:false, d1Databases:{DB:'subscription-test'}, bindings:{TRUST_PROXY_AUTH_HEADER:'true', TOKEN_ENCRYPTION_KEY:btoa('a'.repeat(32))} });
     assert.equal((await rpc('events/subscribe')).result?.id,first.result.id);
     assert.equal((await rpc('events/subscribe','bob')).error?.code,-32001);
     await rpc('events/unsubscribe'); await rpc('events/unsubscribe');
@@ -218,7 +218,7 @@ test('owner subscription removal is authenticated, origin-checked and isolated f
   });
   const origin = 'https://bridge.example';
   const mf = new Miniflare({ modules: true, script: outputFiles[0].text, compatibilityDate: '2026-05-15',
-    compatibilityFlags: ['nodejs_compat'], cf: false, d1Databases: { DB: 'subscription-removal' }, bindings: { SITE_ORIGIN: origin } });
+    compatibilityFlags: ['nodejs_compat'], cf: false, d1Databases: { DB: 'subscription-removal' }, bindings: { SITE_ORIGIN: origin, TRUST_PROXY_AUTH_HEADER: 'true' } });
   try {
     const db = await mf.getD1Database('DB');
     for (const file of readdirSync('drizzle').filter(f => f.endsWith('.sql')).sort()) {
