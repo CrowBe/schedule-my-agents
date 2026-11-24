@@ -29,7 +29,7 @@ function fixture() {
   let event: CalendarEvent | null = normalize('private-calendar', { id: 'private-event', summary: 'Secret appointment', start: { dateTime: new Date(now + 60_000).toISOString() } })!;
   const store = new Store(DB);
   sql.prepare('INSERT INTO connections (owner,refresh_token,created_at) VALUES (?, ?, ?)').run('private-owner', 'encrypted-refresh', now);
-  sql.prepare('INSERT INTO calendars VALUES (?, ?, ?, 1, ?)').run('private-owner', 'private-calendar', 'Personal', 'grant-1');
+  sql.prepare('INSERT INTO calendars (owner, calendar_id, summary, enabled, generation) VALUES (?, ?, ?, 1, ?)').run('private-owner', 'private-calendar', 'Personal', 'grant-1');
   const jobs: AlarmJob[] = []; let failure = false; let lookupHook = async () => {};
   let next: CalendarEvent | null = null; let successors = 0;
   const provider: CalendarProvider = {

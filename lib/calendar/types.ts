@@ -7,6 +7,12 @@ export interface Statement {
 export interface Database { prepare(sql: string): Statement; batch(statements: Statement[]): Promise<unknown> }
 export interface Environment {
   DB?: Database;
+  OWNER_ID?: string;
+  ADMIN_SECRET?: string;
+  MCP_AUTH_TOKEN?: string;
+  SESSION_SECRET?: string;
+  TRUST_PROXY_AUTH_HEADER?: string;
+  GOOGLE_WRITE_SCOPE_ENABLED?: string;
   // Explicitly enable discovery after migration, including an authorized live test.
   MCP_EVENTS_READY?: string;
   SITE_ORIGIN?: string;
@@ -20,15 +26,27 @@ export interface Environment {
   ALARM_REGISTRATION_KEY?: string;
   ALARM_CALLBACK_KEY?: string;
 }
-export type Calendar = { id: string; summary: string; accessRole: string };
+export type Calendar = { id: string; summary: string; accessRole: string; primary?: boolean };
+export type CalendarAttendee = {
+  email: string;
+  displayName?: string;
+  responseStatus?: 'needsAction' | 'declined' | 'tentative' | 'accepted';
+  organizer?: boolean;
+  self?: boolean;
+};
 export type CalendarEvent = {
   id: string; calendarId: string; title?: string; description?: string;
   start: string; end?: string; status: string; provider: string; providerEventId: string;
+  organizerEmail?: string; organizerSelf?: boolean; creatorEmail?: string; attendees?: CalendarAttendee[];
   // Provider-owned stable identities. A recurrence identity need not be a date.
   seriesId?: string; recurrenceId?: string;
 };
 export type Watch = { id: string; token: string; resourceId: string; expiration: number };
 export type CalendarChange = { watchId:string; token:string; resourceId:string; cursor:string; state:'initial'|'changed'|'removed' };
+export type CalendarEventName = 'calendar.event.invited' | 'calendar.event.starting';
+export type WriteBackAction =
+  | { kind: 'rsvp'; agentEmail: string; responseStatus: 'accepted' | 'tentative' | 'declined' }
+  | { kind: 'run_note'; agentEmail: string; runStatus: 'started' | 'completed' | 'failed'; note?: string };
 export interface CalendarProvider {
   readonly providerId?: string;
   discoverCalendars(): Promise<Calendar[]>;
@@ -37,6 +55,8 @@ export interface CalendarProvider {
   syncEvents(calendarId: string, now: number): Promise<CalendarEvent[]>;
   alarmCandidates?(calendarId: string, now: number): Promise<CalendarEvent[]>;
   getOccurrence?(calendarId: string, eventId: string): Promise<CalendarEvent | null>;
+  applyWriteBack?(calendarId: string, eventId: string, action: WriteBackAction,
+    authorize?: (live: CalendarEvent) => Promise<void>): Promise<{ applied: true; kind: WriteBackAction['kind'] }>;
   nextOccurrence?(calendarId: string, seriesId: string, after: number): Promise<CalendarEvent | null>;
 }
 export class AppError extends Error {

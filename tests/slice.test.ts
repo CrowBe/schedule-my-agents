@@ -153,7 +153,7 @@ test('MCP calendar tool declares read-only behavior and keeps calls scoped to th
   const call = {jsonrpc:'2.0',id:2,method:'tools/call',params:{name:tool.name,arguments:{}}};
   const alice = JSON.parse(await (await f.request('/mcp', call)).text());
   const bob = JSON.parse(await (await f.request('/mcp', call, 'bob')).text());
-  assert.deepEqual(JSON.parse(alice.result.content[0].text), [{calendarId:'personal',summary:'Personal'}]);
+  assert.deepEqual(JSON.parse(alice.result.content[0].text), [{calendarId:'personal',summary:'Personal',writeBackEnabled:false}]);
   assert.deepEqual(JSON.parse(bob.result.content[0].text), []);
   assert.deepEqual(f.sql.prepare('SELECT * FROM calendars').all(), before);
 });
@@ -229,7 +229,7 @@ test('disconnect revokes local data even if provider credentials no longer work'
 test('Google adapter follows pagination, expands recurrence and limits stored fields',async()=>{
   const calls:string[]=[];
   const adapter=new GoogleCalendar('access',async(url)=>{ calls.push(String(url)); const parsed=new URL(String(url)); assert.equal(parsed.searchParams.get('singleEvents'),'true'); assert.ok(parsed.searchParams.get('timeMax')); return Response.json(parsed.searchParams.has('pageToken')? {items:[{id:'cancelled',status:'cancelled'},{id:'all-day',start:{date:'2026-10-05'}}]} : {items:[{id:'instance1',summary:'Review',attendees:[{email:'private'}],start:{dateTime:'2026-10-04T13:00:00Z'}}],nextPageToken:'next'}); });
-  const events=await adapter.syncEvents('personal',Date.parse('2026-10-04T12:00:00Z')); assert.equal(events.length,1); assert.equal(calls.length,2); assert.ok(!JSON.stringify(events).includes('attendees'));
+  const events=await adapter.syncEvents('personal',Date.parse('2026-10-04T12:00:00Z')); assert.equal(events.length,1); assert.equal(calls.length,2); assert.deepEqual(events[0].attendees, []);
 });
 
 test('failed push retains snapshot and message cursor; explicit recovery fetches final provider state', async () => {
