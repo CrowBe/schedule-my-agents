@@ -14,6 +14,8 @@ const localBindingConfig = {
       database_id: LOCAL_PLACEHOLDER_DATABASE_ID,
     },
   ],
+  // Unattended watch renewal and missed-push convergence.
+  triggers: { crons: ["*/15 * * * *"] },
 };
 
 export default defineConfig(async () => {
