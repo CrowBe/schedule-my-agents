@@ -1,7 +1,7 @@
 import { signedHeaders } from './subscriptions.ts';
 import type { CalendarEvent, CalendarEventName } from './types.ts';
 
-import type { EventProvenance } from './provenance.ts';
+import { stripAgentStatusNotes, type EventProvenance } from './provenance.ts';
 
 type EventDetails = {
   name?: CalendarEventName;
@@ -127,13 +127,15 @@ export class Deliveries {
       };
       const legacyPayload = !invited && !receipt.agent_email && !receipt.lead_time_minutes &&
         original.organizerEmail === undefined && original.organizerSelf === undefined && original.creatorEmail === undefined;
-      const originalBody = serializeOccurrence(eventId, original, details);
+      const withoutNotes = (event: CalendarEvent): CalendarEvent =>
+        event.description === undefined ? event : { ...event, description: stripAgentStatusNotes(event.description) };
+      const originalBody = serializeOccurrence(eventId, withoutNotes(original), details);
       matchesOccurrence = event => event.status !== 'cancelled' &&
         event.seriesId === original.seriesId &&
         (event.recurrenceId === original.recurrenceId || (event.provider === 'google' && event.recurrenceId !== undefined && original.recurrenceId !== undefined &&
           Date.parse(event.recurrenceId) === Date.parse(original.recurrenceId))) &&
         (legacyPayload || (original.organizerEmail === event.organizerEmail && original.organizerSelf === event.organizerSelf &&
-          original.creatorEmail === event.creatorEmail)) && serializeOccurrence(eventId, event, details) === originalBody;
+          original.creatorEmail === event.creatorEmail)) && serializeOccurrence(eventId, withoutNotes(event), details) === originalBody;
       if (!matchesOccurrence(current)) throw new Error('Occurrence changed.');
       body = serializeOccurrence(eventId, original, { ...details, provenance: route!.provenance });
     } catch {
@@ -217,5 +219,7 @@ export class Deliveries {
     }
     const pending = await this.store.first<{n: number}>("SELECT count(*) n FROM deliveries WHERE outbox_id = ? AND status = 'pending'", id);
     if (pending?.n) throw new PendingDelivery();
+    // Onboarding receipts have no alarm cleanup on success; scrub private event text once settled.
+    if (invited) await this.store.run("UPDATE occurrence_outbox SET payload = '' WHERE id = ? AND status = 'ready'", id);
   }
 }

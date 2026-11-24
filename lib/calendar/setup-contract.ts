@@ -28,5 +28,5 @@ export type SetupClient = {
   logout?(): Promise<void>;
   load(): Promise<SetupSnapshot>;
   /** A string body is a calendar ID, sent as `{ calendarId }`. */
-  action(path: string, body?: Record<string, unknown> | string): Promise<void>;
+  action(path: string, body?: Record<string, unknown> | string): Promise<unknown>;
 };

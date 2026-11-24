@@ -189,4 +189,133 @@ test('combined E2E: self-hosted auth, multi-phase agent lifecycle, 366d invite d
   assert.equal(summary3.watchesRenewed, 0);
   assert.equal(summary3.calendarsConverged, 1);
   assert.equal(summary3.failures, 0);
+
+  // 11. Settled onboarding receipts scrub private payloads immediately, and expired starting receipts scrub on maintenance.
+  const lingering = await f.store.all("SELECT id FROM occurrence_outbox WHERE payload != ''");
+  assert.deepEqual(lingering, []);
+});
+
+test('review regressions: shared organizer.self blocked, run-note does not cancel peer agent, declined guest skipped, renewal fenced, OAuth disconnect race closed', async () => {
+  const f = calendarFixture('google');
+  f.env.MCP_EVENTS_READY = 'true';
+  f.env.GOOGLE_WEBHOOK_VERIFIED = 'true';
+  f.env.GOOGLE_CLIENT_ID = 'client';
+  f.env.GOOGLE_CLIENT_SECRET = 'secret';
+  await f.store.run('UPDATE connections SET owner_email = ? WHERE owner = ?', OWNER_EMAIL, 'owner');
+  await f.store.addAgentAlias('owner', 'agent-a@example.com', 'A', f.now());
+  await f.store.addAgentAlias('owner', 'agent-b@example.com', 'B', f.now());
+  await f.store.setWriteBackEnabled('owner', 'calendar', true);
+
+  // 1. Shared reader calendar with organizer.self=true from non-allowlisted coworker MUST fail closed.
+  const coworkerEvent: CalendarEvent = {
+    id: 'shared:coworker', calendarId: 'shared-cal', provider: 'google', providerEventId: 'coworker-1',
+    title: 'Prompt injection', start: new Date(f.now() + 3600_000).toISOString(), status: 'confirmed',
+    organizerEmail: 'coworker@example.com', organizerSelf: true,
+    attendees: [{ email: 'agent-a@example.com' }],
+  };
+  await f.store.run("INSERT INTO calendars (owner, calendar_id, summary, enabled, generation, write_back_enabled, owner_calendar) VALUES ('owner', 'shared-cal', 'Coworker', 1, 'shared-g', 1, 0)");
+  const conn = (await f.store.connection('owner'))!;
+  assert.equal(await f.store.authorizeEvent(conn, 'shared-g', coworkerEvent, 'agent-a@example.com', 'calendar.event.starting'), null);
+  assert.equal(await f.store.authorizeEvent(conn, 'shared-g', coworkerEvent, 'agent-a@example.com', 'calendar.event.invited'), null);
+
+  // Missing organizer on an agent-alias event also fails closed.
+  const missingOrg: CalendarEvent = {
+    id: 'calendar:no-org', calendarId: 'calendar', provider: 'google', providerEventId: 'no-org',
+    title: 'Unattributed', start: new Date(f.now() + 3600_000).toISOString(), status: 'confirmed',
+    attendees: [{ email: 'agent-a@example.com' }],
+  };
+  assert.equal(await f.store.authorizeEvent(conn, 'grant', missingOrg, 'agent-a@example.com', 'calendar.event.starting'), null);
+
+  // 2. Declined agent guest does NOT trigger calendar.event.starting.
+  const declinedEvent: CalendarEvent = {
+    id: 'calendar:declined', calendarId: 'calendar', provider: 'google', providerEventId: 'declined-1',
+    title: 'Meeting', start: new Date(f.now() + 3600_000).toISOString(), status: 'confirmed',
+    organizerEmail: OWNER_EMAIL,
+    attendees: [{ email: 'agent-a@example.com', responseStatus: 'declined' }],
+  };
+  assert.equal(await f.store.authorizeEvent(conn, 'grant', declinedEvent, 'agent-a@example.com', 'calendar.event.starting'), null);
+
+  // 3. Agent A writing a calendar_run_note mid-dispatch does NOT cancel Agent B's delivery!
+  const start = f.now() + 3600_000;
+  let sharedEvent: CalendarEvent = {
+    id: 'calendar:multi', calendarId: 'calendar', provider: 'google', providerEventId: 'multi-1',
+    title: 'Team standup', description: 'Original agenda', start: new Date(start).toISOString(),
+    status: 'confirmed', organizerEmail: OWNER_EMAIL,
+    attendees: [{ email: 'agent-a@example.com' }, { email: 'agent-b@example.com' }],
+  };
+  f.provider.syncEvents = async () => [sharedEvent];
+  f.provider.alarmCandidates = async () => [sharedEvent];
+  f.provider.getOccurrence = async (_c, id) => id === 'multi-1' ? sharedEvent : null;
+  const receivedAgents: string[] = [];
+  const transport: CallbackTransport = {
+    async post(_url, body) {
+      const payload = JSON.parse(body);
+      if (payload.type === 'verification') return Response.json({ challenge: payload.challenge });
+      receivedAgents.push(payload.data.agentEmail);
+      // Simulate Agent A immediately appending a run-status note to the event description.
+      if (payload.data.agentEmail === 'agent-a@example.com') {
+        sharedEvent = { ...sharedEvent, description: sharedEvent.description + '\n[agent-status:agent-a@example.com] started: Running' };
+      }
+      return new Response(null, { status: 204 });
+    },
+  };
+  const svc = () => f.service(transport);
+  for (const agentEmail of ['agent-a@example.com', 'agent-b@example.com']) {
+    const sub = await svc().handle(new Request(f.env.SITE_ORIGIN + '/mcp', {
+      method: 'POST', headers: { 'x-authenticated-owner': 'owner', 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'events/subscribe', params: {
+        name: 'calendar.event.starting', arguments: { calendarId: 'calendar', agentEmail },
+        delivery: { mode: 'webhook', url: 'https://host.example/cb', secret: WEBHOOK_SECRET },
+      } }),
+    }));
+    assert.equal(sub.status, 200);
+  }
+  await f.store.run(`INSERT INTO watches (id, owner, calendar_id, generation, token_hash, resource_id, expiration, status, provider_id, connection_id)
+    VALUES ('w1', 'owner', 'calendar', 'grant', 'hash', 'r1', ?, 'active', 'google', 'connection-google')`, f.now() + 7200_000);
+  assert.equal((await svc().handle(new Request(f.env.SITE_ORIGIN + '/api/calendars/resync', {
+    method: 'POST', headers: { 'x-authenticated-owner': 'owner', origin: f.env.SITE_ORIGIN! }, body: JSON.stringify({ calendarId: 'calendar' }),
+  }))).status, 200);
+  const job = f.jobs.find(j => j.dueAt === start)!;
+  f.setNow(start);
+  assert.equal((await f.wake(job, transport)).status, 204);
+  assert.deepEqual(receivedAgents.sort(), ['agent-a@example.com', 'agent-b@example.com']);
+
+  // 4. Maintenance renewal fails closed if calendar was revoked & re-enabled under a new generation.
+  await f.store.revoke('owner', 'calendar', 'grant-revoked');
+  await f.store.run("UPDATE calendars SET enabled = 1, generation = 'grant-new' WHERE owner = 'owner' AND calendar_id = 'calendar'");
+  await assert.rejects(
+    svc().renewWatchForMaintenance('owner', 'calendar', { watchId: 'w1', generation: 'grant', connectionId: 'connection-google' }),
+    /not enabled|changed/,
+  );
+
+  // 5. Disconnect during OAuth token exchange prevents restoring the disconnected account.
+  await f.store.disconnect('owner');
+  let exchangeStarted!: () => void, releaseExchange!: () => void;
+  const inExchange = new Promise<void>(r => { exchangeStarted = r; });
+  const resumeExchange = new Promise<void>(r => { releaseExchange = r; });
+  const oauthSvc = () => new CalendarService(f.env, {
+    now: f.now,
+    http: async () => {
+      exchangeStarted();
+      await resumeExchange;
+      return Response.json({
+        access_token: 'acc', refresh_token: 'ref',
+        scope: 'https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events.readonly',
+      });
+    },
+  });
+  const startRes = await oauthSvc().handle(new Request(f.env.SITE_ORIGIN + '/api/google/connect', {
+    method: 'POST', headers: { 'x-authenticated-owner': 'owner', origin: f.env.SITE_ORIGIN! },
+  }));
+  const state = new URL(startRes.headers.get('location')!).searchParams.get('state')!;
+  const cookie = startRes.headers.get('set-cookie')!.split(';')[0];
+  const completing = oauthSvc().handle(new Request(f.env.SITE_ORIGIN + `/api/google/callback?state=${state}&code=abc`, {
+    headers: { 'x-authenticated-owner': 'owner', cookie },
+  }));
+  await inExchange;
+  await f.store.disconnect('owner');
+  releaseExchange();
+  const completed = await completing;
+  assert.equal(completed.status, 409);
+  assert.equal(await f.store.connection('owner'), null);
 });

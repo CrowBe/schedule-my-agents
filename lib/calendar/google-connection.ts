@@ -41,15 +41,28 @@ export class GoogleAuthorization {
     const state = params.get('state'), code = params.get('code');
     const cookie = request.headers.get('cookie')?.split(';').map(s => s.trim()).find(s => s.startsWith('calendar_oauth='))?.slice('calendar_oauth='.length);
     if (!state || state !== cookie || !code) throw new AppError(400, 'Google authorization was cancelled or invalid.');
-    const pending = await this.store.first<{ verifier: string }>('DELETE FROM oauth_states WHERE state = ? AND owner = ? AND expires_at > ? RETURNING verifier', await digest(state), owner, this.now());
+    const hashed = await digest(state), claimed = 'claimed:' + hashed;
+    const pending = await this.store.first<{ verifier: string }>(
+      'UPDATE oauth_states SET state = ? WHERE state = ? AND owner = ? AND expires_at > ? RETURNING verifier',
+      claimed, hashed, owner, this.now());
     if (!pending) throw new AppError(400, 'Google authorization expired or was already used.');
-    // Avoid silently replacing an account while resource grants from another account remain.
-    if (await this.store.connection(owner)) throw new AppError(409, 'This account is already connected. Disconnect before changing Google accounts.');
-    const verifier = await open(pending.verifier, this.env.TOKEN_ENCRYPTION_KEY, owner);
-    const tokens = await tokenRequest(this.env, { grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: this.origin() + '/api/google/callback' }, this.http);
-    if (!tokens.refresh_token || !this.scopes().every(scope => tokens.scope?.split(' ').includes(scope) ||
-      (scope === SCOPES[1] && tokens.scope?.split(' ').includes(WRITE_SCOPE)))) throw new AppError(400, 'The requested Calendar permissions and offline access are required.');
-    await this.store.run('INSERT INTO connections (owner, refresh_token, created_at, provider_id, connection_id) VALUES (?, ?, ?, ?, ?)', owner, await seal(tokens.refresh_token, this.env.TOKEN_ENCRYPTION_KEY, owner), this.now(), 'google', random());
-    return new Response(null, { status: 303, headers: { Location: '/', 'Cache-Control': 'no-store', 'Set-Cookie': 'calendar_oauth=; HttpOnly; Secure; SameSite=Lax; Path=/api/google/callback; Max-Age=0' } });
+    try {
+      // Avoid silently replacing an account while resource grants from another account remain.
+      if (await this.store.connection(owner)) throw new AppError(409, 'This account is already connected. Disconnect before changing Google accounts.');
+      const verifier = await open(pending.verifier, this.env.TOKEN_ENCRYPTION_KEY, owner);
+      const tokens = await tokenRequest(this.env, { grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: this.origin() + '/api/google/callback' }, this.http);
+      if (!tokens.refresh_token || !this.scopes().every(scope => tokens.scope?.split(' ').includes(scope) ||
+        (scope === SCOPES[1] && tokens.scope?.split(' ').includes(WRITE_SCOPE)))) throw new AppError(400, 'The requested Calendar permissions and offline access are required.');
+      const sealed = await seal(tokens.refresh_token, this.env.TOKEN_ENCRYPTION_KEY, owner), connectionId = random();
+      // Disconnect deletes oauth_states; fail closed if disconnect committed during token exchange.
+      const inserted = await this.store.first<{ owner: string }>(`INSERT INTO connections (owner, refresh_token, created_at, provider_id, connection_id)
+        SELECT ?, ?, ?, 'google', ? WHERE EXISTS (SELECT 1 FROM oauth_states WHERE state = ? AND owner = ?)
+          AND NOT EXISTS (SELECT 1 FROM connections WHERE owner = ?) RETURNING owner`,
+        owner, sealed, this.now(), connectionId, claimed, owner, owner);
+      if (!inserted) throw new AppError(409, 'Google authorization was cancelled because account state changed.');
+      return new Response(null, { status: 303, headers: { Location: '/', 'Cache-Control': 'no-store', 'Set-Cookie': 'calendar_oauth=; HttpOnly; Secure; SameSite=Lax; Path=/api/google/callback; Max-Age=0' } });
+    } finally {
+      await this.store.run('DELETE FROM oauth_states WHERE state = ? AND owner = ?', claimed, owner);
+    }
   }
 }

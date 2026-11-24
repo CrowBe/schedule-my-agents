@@ -1,6 +1,6 @@
 import { Subscriptions, SubscriptionError, eventDefinitions, type CallbackTransport } from './subscriptions.ts';
 import { authenticateApi, authenticateMcp, handleAuthRoute, siteOrigin } from './auth.ts';
-import { CalendarMaintenance } from './maintenance.ts';
+import { CalendarMaintenance, type RenewalExpectation } from './maintenance.ts';
 import { digest, random } from './crypto.ts';
 import { type Fetch } from './google.ts';
 import { resolveConnectedProvider, registeredAdapter, type ProviderAdapters } from './providers.ts';
@@ -130,7 +130,7 @@ export class CalendarService {
         const saved = await this.store.first(`INSERT INTO calendars (owner, calendar_id, summary, enabled, generation, owner_calendar)
           SELECT ?, ?, ?, 1, ?, ? WHERE ? IS NULL OR EXISTS (SELECT 1 FROM connections WHERE owner = ? AND ${connectionIdentity} = ?)
           ON CONFLICT(owner, calendar_id) DO UPDATE SET summary = excluded.summary, enabled = 1, owner_calendar = excluded.owner_calendar
-          RETURNING calendar_id`, owner, id, calendar.summary, random(), Number(calendar.accessRole === 'owner'),
+          RETURNING calendar_id`, owner, id, calendar.summary, random(), Number(calendar.primary === true && calendar.accessRole === 'owner'),
           connection?.id ?? null, owner, connection?.id ?? null);
         if (!saved) throw new AppError(403, 'Calendar connection changed during consent.');
         return json({ enabled: true, calendarId: id });
@@ -232,8 +232,8 @@ export class CalendarService {
     }
     return { available, connection };
   }
-  public async renewWatchForMaintenance(owner: string, calendarId: string) {
-    await this.watch(owner, calendarId);
+  public async renewWatchForMaintenance(owner: string, calendarId: string, expected?: RenewalExpectation) {
+    await this.watch(owner, calendarId, expected);
   }
   public async syncWatchForMaintenance(watch: WatchRow) {
     await this.sync(watch);
@@ -243,24 +243,31 @@ export class CalendarService {
       store: this.store,
       now: this.now,
       ingressReady: current => this.ingressReady(current),
-      renewWatch: (current, calendarId) => this.renewWatchForMaintenance(current, calendarId),
+      renewWatch: (current, calendarId, expected) => this.renewWatchForMaintenance(current, calendarId, expected),
       syncWatch: watch => this.syncWatchForMaintenance(watch),
     }).run(owner);
   }
-  private async watch(owner: string, calendarId: string) {
-    const calendar = await this.store.requireEnabled(owner, calendarId);
+  private async watch(owner: string, calendarId: string, expected?: RenewalExpectation) {
+    const calendar = await this.store.requireEnabled(owner, calendarId, expected?.generation);
     if (!await this.ingressReady(owner)) throw new AppError(503, 'Provider webhook ingress has not been verified for this server. Calendar consent is saved; watch creation is blocked.');
     const connection=await this.store.connection(owner),providerId=connection?.providerId??'google';
+    if (expected && connection && (expected.connectionId ? connection.id !== expected.connectionId : !connection.legacy)) {
+      throw new AppError(403, 'Calendar connection changed before watch renewal.');
+    }
     const provider = await this.provider(owner);
     const id = random(), token = random() + random(), now = this.now();
-    const previous = await this.store.all<WatchRow>("SELECT * FROM watches WHERE owner = ? AND calendar_id = ? AND status = 'active'", owner, calendarId);
+    // Serialize concurrent renewals per calendar grant and fence background renewal to the expected watch & generation.
     const pending = await this.store.first(`INSERT INTO watches (id, owner, calendar_id, generation, token_hash, expiration, provider_id, connection_id, status)
       SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'pending'
       WHERE EXISTS (SELECT 1 FROM calendars WHERE owner = ? AND calendar_id = ? AND enabled = 1 AND generation = ?)
         AND (? IS NULL OR EXISTS (SELECT 1 FROM connections WHERE owner = ? AND provider_id = ? AND ${connectionIdentity} = ?))
+        AND NOT EXISTS (SELECT 1 FROM watches WHERE owner = ? AND calendar_id = ? AND generation = ? AND status = 'pending' AND expiration > ?)
+        AND (? IS NULL OR EXISTS (SELECT 1 FROM watches WHERE id = ? AND owner = ? AND calendar_id = ? AND generation = ? AND status = 'active'))
       RETURNING id`, id, owner, calendarId, calendar.generation, await digest(token), now + 60_000, providerId, connection?.id ?? '',
-      owner, calendarId, calendar.generation, connection?.id ?? null, owner, providerId, connection?.id ?? null);
-    if (!pending) throw new AppError(403, 'Calendar consent or connection changed during watch creation.');
+      owner, calendarId, calendar.generation, connection?.id ?? null, owner, providerId, connection?.id ?? null,
+      owner, calendarId, calendar.generation, now,
+      expected?.watchId ?? null, expected?.watchId ?? null, owner, calendarId, calendar.generation);
+    if (!pending) throw new AppError(409, 'Calendar watch renewal is already in progress or consent changed.');
     let created;
     try {
       created = await provider.watchCalendar(calendarId, id, token, this.origin() + (providerId==='google'?'/api/google/webhook':`/api/providers/${providerId}/webhook`));
@@ -270,7 +277,9 @@ export class CalendarService {
       const row = await this.store.first<WatchRow>('SELECT * FROM watches WHERE id = ?', id);
       if (row?.status !== 'active') throw new AppError(403, 'Calendar consent was revoked during watch creation.');
       await this.sync(row, provider);
-      for (const old of previous) {
+      // Retire every superseded active channel for this calendar so duplicate active channels cannot persist.
+      const superseded = await this.store.all<WatchRow>("SELECT * FROM watches WHERE owner = ? AND calendar_id = ? AND status = 'active' AND id != ?", owner, calendarId, id);
+      for (const old of superseded) {
         await this.store.run("UPDATE watches SET status = 'revoked' WHERE id = ?", old.id);
         if (old.resource_id && old.provider_id===providerId && (!old.connection_id || old.connection_id===connection?.id)) { try { await provider.stopWatchingCalendar(old.id, old.resource_id); } catch { /* Expiry is retained; local channel is already revoked. */ } }
       }
@@ -324,14 +333,19 @@ export class CalendarService {
       if (current?.status !== 'active' || current.expiration <= this.now()) throw new AppError(409, 'Watch expired or was revoked during synchronization.');
       if(connection && (await this.store.connection(watch.owner))?.id!==connection.id) throw new AppError(403,'Calendar connection changed during synchronization.');
       await requireLock();
-      if (connection) await this.discoverInvitations(watch, connection, accepted, lockUntil);
+      if (connection) {
+        const invitedCandidates = accepted.map(({ event }) => ({
+          event, source: organizer(event, connection.ownerEmail ?? null, calendar.owner_calendar === 1, allowed, true),
+        })).filter(({ source }) => source.kind !== 'blocked');
+        await this.discoverInvitations(watch, connection, invitedCandidates, lockUntil);
+      }
       await requireLock();
       const seeded = await this.alarms.seed(watch.owner, watch.calendar_id, watch.generation, calendarProvider, { channelTag: (await digest(watch.id)).slice(0, 12), ...(messageNumber ? { messageNumber } : {}) });
       if (connection && seeded.length) {
         const seen = new Set(events.map(event => event.providerEventId));
         const beyondSnapshot = seeded.filter(event => !seen.has(event.providerEventId) && event.calendarId === watch.calendar_id &&
           event.provider === connection.providerId && event.status !== 'cancelled' && Date.parse(event.start) >= this.now())
-          .map(event => ({ event, source: organizer(event, connection.ownerEmail ?? null, calendar.owner_calendar === 1, allowed) }))
+          .map(event => ({ event, source: organizer(event, connection.ownerEmail ?? null, calendar.owner_calendar === 1, allowed, true) }))
           .filter(({ source }) => source.kind !== 'blocked');
         if (beyondSnapshot.length) {
           await requireLock();

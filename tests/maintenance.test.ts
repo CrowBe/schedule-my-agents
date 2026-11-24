@@ -189,3 +189,28 @@ test('expired OAuth states, subscription attempts, and subscriptions are cleaned
   // Idempotent: a second run finds nothing left to clean.
   assert.equal((await f.run()).cleanedUp, 0);
 });
+
+test('maxPerTick does not starve due watches behind fresh or unwatched calendars', async () => {
+  const f = fixture();
+  for (let i = 0; i < 5; i++) {
+    f.calendar(`a-unwatched-${i}`);
+    f.calendar(`b-fresh-${i}`);
+    f.watch(`b-fresh-${i}`, { expiration: NOW + 7 * 24 * HOUR, synced_at: NOW - 60_000 });
+  }
+  f.calendar('z-due');
+  f.watch('z-due', { expiration: NOW + WATCH_RENEWAL_MARGIN_MS - 1_000 });
+  const summary = await f.run({ maxPerTick: 2 });
+  assert.equal(summary.watchesRenewed, 1);
+  assert.deepEqual(f.renewed, ['z-due']);
+});
+
+test('cleanup scrubs expired occurrence_outbox payloads even without an alarm callback', async () => {
+  const f = fixture();
+  f.sql.prepare(`INSERT INTO occurrence_outbox (id, owner, calendar_id, generation, provider_event_id, due_at, created_at, expires_at, payload, provider_id, connection_id, status, event_name, agent_email)
+    VALUES ('inv-1', 'owner', 'c1', 'g1', 'ev-1', ?, ?, ?, '{"title":"Private text"}', 'google', 'connection-1', 'ready', 'calendar.event.invited', 'agent@example.com')`)
+    .run(NOW - 600_000, NOW - 600_000, NOW - 1);
+  const summary = await f.run();
+  assert.equal(summary.cleanedUp, 1);
+  const row = f.sql.prepare('SELECT status, payload FROM occurrence_outbox WHERE id = ?').get('inv-1') as { status: string; payload: string };
+  assert.deepEqual({ ...row }, { status: 'terminal', payload: '' });
+});

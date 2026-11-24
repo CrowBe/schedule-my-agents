@@ -18,12 +18,20 @@ const encoder = new TextEncoder();
 const noStore = { 'Cache-Control': 'no-store' };
 const json = (value: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(value, { status, headers: { ...noStore, ...headers } });
 
+const nonEmpty = (value: string | undefined) => value && value.trim() ? value : undefined;
+
 export function authMode(env: AuthEnvironment): AuthMode {
-  if (env.ADMIN_SECRET) return 'self_hosted';
+  if (nonEmpty(env.ADMIN_SECRET)) return 'self_hosted';
   return env.TRUST_PROXY_AUTH_HEADER === 'true' ? 'proxy' : 'unconfigured';
 }
-const configuredOwner = (env: AuthEnvironment) => env.OWNER_ID || 'owner';
-const proxyOwner = (request: Request, env: AuthEnvironment) => env.TRUST_PROXY_AUTH_HEADER === 'true' ? request.headers.get(OWNER_HEADER) || null : null;
+const configuredOwner = (env: AuthEnvironment) => nonEmpty(env.OWNER_ID) ?? 'owner';
+const proxyOwner = (request: Request, env: AuthEnvironment) => {
+  if (env.TRUST_PROXY_AUTH_HEADER !== 'true') return null;
+  const header = request.headers.get(OWNER_HEADER) || null;
+  if (!header) return null;
+  const pinned = nonEmpty(env.OWNER_ID);
+  return pinned && header !== pinned ? null : header;
+};
 
 // Digest both sides first so comparison time is independent of length and content.
 async function secretEquals(given: string, expected: string) {
@@ -46,8 +54,20 @@ function cookie(request: Request, name: string) {
 const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 const unbase64url = (value: string) => Uint8Array.from(atob(value.replaceAll('-', '+').replaceAll('_', '/')), c => c.charCodeAt(0));
 
+function sessionMaterial(env: AuthEnvironment) {
+  return nonEmpty(env.SESSION_SECRET) ?? nonEmpty(env.TOKEN_ENCRYPTION_KEY) ?? nonEmpty(env.ADMIN_SECRET);
+}
+async function credentialsConflict(env: AuthEnvironment) {
+  const mcp = nonEmpty(env.MCP_AUTH_TOKEN);
+  if (!mcp) return false;
+  const admin = nonEmpty(env.ADMIN_SECRET);
+  if (admin && await secretEquals(mcp, admin)) return true;
+  const signing = sessionMaterial(env);
+  if (signing && await secretEquals(mcp, signing)) return true;
+  return false;
+}
 async function sessionKey(env: AuthEnvironment) {
-  const material = env.SESSION_SECRET ?? env.TOKEN_ENCRYPTION_KEY ?? env.ADMIN_SECRET;
+  const material = sessionMaterial(env);
   if (!material) throw new Error('Session signing is not configured.');
   const base = await crypto.subtle.importKey('raw', encoder.encode(material), 'HKDF', false, ['deriveKey']);
   return crypto.subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(32), info: encoder.encode('schedule-my-agents/session/v1') },
@@ -74,6 +94,7 @@ async function sessionOwner(request: Request, env: AuthEnvironment, now: number)
 
 /** Owner for setup/admin `/api/*` routes. MCP_AUTH_TOKEN is never accepted here. */
 export async function authenticateApi(request: Request, env: AuthEnvironment, now: number): Promise<string | null> {
+  if (await credentialsConflict(env)) return null;
   if (authMode(env) !== 'self_hosted') return proxyOwner(request, env);
   const token = bearer(request);
   if (token) return await secretEquals(token, env.ADMIN_SECRET!) ? configuredOwner(env) : null;
@@ -82,11 +103,11 @@ export async function authenticateApi(request: Request, env: AuthEnvironment, no
 
 /** Owner for `POST /mcp`. Admin sessions and ADMIN_SECRET never authorize an MCP host. */
 export async function authenticateMcp(request: Request, env: AuthEnvironment): Promise<string | null> {
-  if (!env.MCP_AUTH_TOKEN) return proxyOwner(request, env);
-  // A shared value would let an MCP host administer calendars; refuse it.
-  if (env.ADMIN_SECRET && env.MCP_AUTH_TOKEN === env.ADMIN_SECRET) return null;
+  if (await credentialsConflict(env)) return null;
+  const mcp = nonEmpty(env.MCP_AUTH_TOKEN);
+  if (!mcp) return proxyOwner(request, env);
   const token = bearer(request);
-  return token && await secretEquals(token, env.MCP_AUTH_TOKEN) ? configuredOwner(env) : null;
+  return token && await secretEquals(token, mcp) ? configuredOwner(env) : null;
 }
 
 /** HTTPS origin, or a loopback HTTP origin for local preview. */
@@ -117,6 +138,7 @@ export async function handleAuthRoute(request: Request, env: AuthEnvironment, no
       return json({ authenticated: false }, 200, { 'Set-Cookie': `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure ? '; Secure' : ''}` });
     }
     if (mode !== 'self_hosted') return json({ error: 'Admin sign-in is not configured on this server.' }, 503);
+    if (await credentialsConflict(env)) return json({ error: 'ADMIN_SECRET and MCP_AUTH_TOKEN must be distinct.' }, 503);
     let secret: unknown;
     try { secret = (await request.json() as { secret?: unknown }).secret; } catch { /* Rejected below. */ }
     if (typeof secret !== 'string' || secret.length > 1024 || !await secretEquals(secret, env.ADMIN_SECRET!)) return json({ error: 'Invalid admin secret.' }, 401);

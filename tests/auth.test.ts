@@ -148,3 +148,23 @@ test('the request gate strips spoofed owners and forwards only the authenticated
   assert.ok(login instanceof Response);
   assert.equal(login.status, 200);
 });
+
+test('conflicting secrets fail closed on all routes, blank SESSION_SECRET falls back, and OWNER_ID pins proxy mode', async () => {
+  const shared = { ...selfHosted, MCP_AUTH_TOKEN: ADMIN };
+  assert.equal((await login(shared, ADMIN)).status, 503);
+  assert.equal(await authenticateApi(req('/api/status', { headers: { authorization: `Bearer ${ADMIN}` } }), shared, NOW), null);
+  assert.equal(await authenticateMcp(req('/mcp', { headers: { authorization: `Bearer ${ADMIN}` } }), shared), null);
+  const sharedSigning = { ...selfHosted, SESSION_SECRET: MCP };
+  assert.equal((await login(sharedSigning, ADMIN)).status, 503);
+  assert.equal(await authenticateApi(req('/api/status', { headers: { authorization: `Bearer ${ADMIN}` } }), sharedSigning, NOW), null);
+  assert.equal(await authenticateMcp(req('/mcp', { headers: { authorization: `Bearer ${MCP}` } }), sharedSigning), null);
+  // Blank SESSION_SECRET from .env.example falls back cleanly.
+  const blankSession = { ...selfHosted, SESSION_SECRET: '' };
+  const okLogin = await login(blankSession, ADMIN);
+  assert.equal(okLogin.status, 200);
+  assert.equal(await authenticateApi(req('/api/status', withCookie(sessionValue(okLogin.headers.get('set-cookie')!))), blankSession, NOW), 'ben');
+  // OWNER_ID pins proxy mode to a single owner identity.
+  const pinnedProxy: AuthEnvironment = { SITE_ORIGIN: ORIGIN, TRUST_PROXY_AUTH_HEADER: 'true', OWNER_ID: 'ben' };
+  assert.equal(await authenticateApi(req('/api/status', { headers: { 'x-authenticated-owner': 'ben' } }), pinnedProxy, NOW), 'ben');
+  assert.equal(await authenticateApi(req('/api/status', { headers: { 'x-authenticated-owner': 'other' } }), pinnedProxy, NOW), null);
+});

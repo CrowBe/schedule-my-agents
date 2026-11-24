@@ -15,16 +15,26 @@ export function normalizeEmail(value: unknown): string | undefined {
   if (email.length <= 320 && /^[^\s@]+@[^\s@]+$/u.test(email)) return email;
 }
 
-export function organizer(event: CalendarEvent, ownerEmail: string | null, ownerCalendar: boolean, allowlist: ReadonlySet<string>) {
+export function stripAgentStatusNotes(description: string | undefined) {
+  if (description === undefined) return undefined;
+  const lines = description.split('\n').filter(line => !/^\[agent-status:[^\]]+\] /.test(line));
+  return lines.join('\n');
+}
+
+export function organizer(event: CalendarEvent, ownerEmail: string | null, ownerCalendar: boolean, allowlist: ReadonlySet<string>, requireOrganizer = false) {
   const email = normalizeEmail(event.organizerEmail);
-  const isOwner = event.organizerSelf === true || event.organizerEmail === undefined ||
-    (email !== undefined && (email === ownerEmail || (ownerCalendar && email === normalizeEmail(event.calendarId))));
+  const verifiedOwnerEmail = email !== undefined && ownerEmail !== null && email === ownerEmail;
+  const verifiedPrimarySelf = ownerCalendar && event.organizerSelf === true && (!email || !ownerEmail || email === ownerEmail);
+  const legacyCalendarWide = !requireOrganizer && (event.organizerEmail === undefined || (ownerEmail === null && event.organizerSelf === true));
+  const isOwner = verifiedOwnerEmail || verifiedPrimarySelf || legacyCalendarWide;
   const kind = isOwner ? 'owner' : email && allowlist.has(email) ? 'allowlisted' : 'blocked';
   return { email, kind } as const;
 }
 
-export function attendeeEmails(event: CalendarEvent) {
-  return new Set(event.attendees?.map(attendee => normalizeEmail(attendee.email)));
+export function attendeeEmails(event: CalendarEvent, includeDeclined = true) {
+  return new Set(event.attendees
+    ?.filter(attendee => includeDeclined || attendee.responseStatus !== 'declined')
+    .map(attendee => normalizeEmail(attendee.email)));
 }
 
 export function invitationKey(event: CalendarEvent) {

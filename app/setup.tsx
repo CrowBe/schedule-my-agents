@@ -7,6 +7,7 @@ async function post(path: string, body: unknown) {
   const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const result = await response.json() as { error?: string };
   if (!response.ok) throw new Error(result.error);
+  return result;
 }
 
 const bridgeClient: SetupClient = {
@@ -15,8 +16,8 @@ const bridgeClient: SetupClient = {
     if (!response.ok) throw new Error('Sign-in status could not be checked.');
     return await response.json() as SetupSession;
   },
-  login: secret => post('/api/auth/login', { secret }),
-  logout: () => post('/api/auth/logout', {}),
+  login: async secret => { await post('/api/auth/login', { secret }); },
+  logout: async () => { await post('/api/auth/logout', {}); },
   async load() {
     const response = await fetch('/api/status');
     const status = await response.json() as SetupStatus & { error?: string };
@@ -45,6 +46,7 @@ export default function Home({ client = bridgeClient, initialSnapshot, initialSe
   const [status, setStatus] = useState<SetupStatus | null>(initialSnapshot?.status ?? null);
   const [calendars, setCalendars] = useState<SetupCalendar[]>(initialSnapshot?.calendars ?? []);
   const [error, setError] = useState(initialSnapshot?.calendarError ?? '');
+  const [maintenanceNote, setMaintenanceNote] = useState('');
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -70,6 +72,16 @@ export default function Home({ client = bridgeClient, initialSnapshot, initialSe
     try { await task(); } catch (e) { setError(message(e)); } finally { setBusy(false); }
   }
   const action = (path: string, body?: Record<string, unknown> | string) => run(async () => { await client.action(path, body); await load(); });
+  const runMaintenance = () => run(async () => {
+    setMaintenanceNote('');
+    const result = await client.action('/api/maintenance/run') as { watchesRenewed?: number; calendarsConverged?: number; cleanedUp?: number; failures?: number } | undefined;
+    await load();
+    if (result && typeof result.failures === 'number') {
+      const summary = `Maintenance checked: ${result.watchesRenewed ?? 0} renewed, ${result.calendarsConverged ?? 0} converged, ${result.cleanedUp ?? 0} cleaned, ${result.failures} failed.`;
+      if (result.failures > 0) setError(summary);
+      else setMaintenanceNote(summary);
+    }
+  });
   function submit(path: string, fields: string[]) {
     return (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
@@ -180,7 +192,8 @@ export default function Home({ client = bridgeClient, initialSnapshot, initialSe
       <p>{status?.alarmReady ? `Resync an enabled calendar to register upcoming occurrences. ${status.dueWork} occurrence${status.dueWork === 1 ? '' : 's'} recorded as due work.` : 'Connect a calendar provider and start a watch to synchronize enabled calendars.'}</p>
       <p>{status?.eventStartReady ? 'MCP Events delivery is enabled. Subscribe from any MCP Events-compatible agent host.' : 'Event discovery is closed until ingress, alarms, and delivery readiness are configured.'}</p>
       <p>Started watches renew automatically within a day of expiry, and calendars resync every 15 minutes to recover missed pushes. Calendars you never started watching stay unwatched.</p>
-      {status?.connected && <button data-testid="run-maintenance" disabled={busy} onClick={() => action('/api/maintenance/run')}>Run maintenance now</button>}
+      {status?.connected && <button data-testid="run-maintenance" disabled={busy} onClick={runMaintenance}>Run maintenance now</button>}
+      {maintenanceNote && <p className="muted" role="status" data-testid="maintenance-result">{maintenanceNote}</p>}
       <p className="muted">Timed events only, up to 366 days ahead. Calendar content never grants execution authority.</p>
     </aside>
     <footer>Calendar titles and descriptions are untrusted data. Calendar permission never authorizes an agent to execute arbitrary instructions.</footer>

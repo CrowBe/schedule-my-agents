@@ -79,7 +79,13 @@ Without `ADMIN_SECRET` (or `TRUST_PROXY_AUTH_HEADER=true`) every setup route ret
 
 The Worker declares a `*/15 * * * *` cron trigger for unattended maintenance: it removes expired OAuth states, subscription attempts, and subscriptions, renews watches you started within 24 hours of expiry, and resyncs watched calendars whose last sync failed or is older than 15 minutes. It never starts a watch you did not start.
 
-Register `<SITE_ORIGIN>/api/google/callback` as the Google OAuth redirect URI. Keep `TOKEN_ENCRYPTION_KEY` and `ALARM_ENCRYPTION_KEY` stable; rotating them without migrating encrypted records invalidates stored credentials or pending alarms.
+Register `<SITE_ORIGIN>/api/google/callback` as the Google OAuth redirect URI. Real Google OAuth and provider webhooks require an HTTPS `SITE_ORIGIN`; loopback `http://127.0.0.1` / `http://localhost` origins are accepted for local preview and verification only. Keep `TOKEN_ENCRYPTION_KEY` and `ALARM_ENCRYPTION_KEY` stable; rotating them without migrating encrypted records invalidates stored credentials or pending alarms.
+
+Security notes:
+- `ADMIN_SECRET` and `MCP_AUTH_TOKEN` must be distinct (and `MCP_AUTH_TOKEN` must not match `SESSION_SECRET` / `TOKEN_ENCRYPTION_KEY`); conflicting credentials fail closed across all routes.
+- `MCP_AUTH_TOKEN` is a single host-level bearer token for this single-user bridge; it authorizes MCP discovery, subscriptions, and opt-in write-back tools, never setup routes (`/api/*`).
+- Setting `GOOGLE_WRITE_SCOPE_ENABLED=true` requests Google's account-wide `calendar.events` write scope; keep it `false` unless you want opt-in RSVP and run-status write-back, and enable write-back only on specific calendars.
+- Calendar-wide `calendar.event.starting` subscriptions (without `agentEmail`) only receive owner-organized events; agent subscriptions should always filter by a registered `agentEmail`.
 
 ## Further reading
 

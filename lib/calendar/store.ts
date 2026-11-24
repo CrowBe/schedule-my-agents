@@ -145,7 +145,8 @@ export class Store {
   }
   async authorizeEvent(connection: CalendarConnection, generation: string, event: CalendarEvent, email: string,
     eventName: CalendarEventName, writeBack = false) {
-    if (event.status === 'cancelled' || event.provider !== connection.providerId || (email && !attendeeEmails(event).has(email))) return null;
+    if (event.status === 'cancelled' || event.provider !== connection.providerId ||
+      (email && !attendeeEmails(event, writeBack || eventName === 'calendar.event.invited').has(email))) return null;
     const organizerEmail = normalizeEmail(event.organizerEmail);
     const row = await this.first<{
       owner_calendar: number; owner_email: string | null; allowlisted: number;
@@ -162,7 +163,7 @@ export class Store {
       connection.providerId, connection.id, email, connection.owner, email, Number(writeBack));
     if (!row) return null;
     const allowed = new Set(organizerEmail && row.allowlisted ? [organizerEmail] : []);
-    const source = organizer(event, row.owner_email, row.owner_calendar === 1, allowed);
+    const source = organizer(event, row.owner_email, row.owner_calendar === 1, allowed, Boolean(email));
     if (source.kind === 'blocked' || (!email && source.kind !== 'owner')) return null;
     if (source.kind === 'owner' && eventName === 'calendar.event.starting') {
       return { provenance: eventProvenance(event, source, true), invitationId: null };
@@ -269,7 +270,7 @@ export class Store {
       ...events.map(({ event, externalOrganizer }) => this.statement(`INSERT OR REPLACE INTO events (owner, calendar_id, provider_event_id, payload)
         SELECT ?, ?, ?, ? WHERE ${guard}${externalOrganizer ? ' AND ' + allowlistGuard : ''}`,
         watch.owner, watch.calendar_id, event.providerEventId,
-        JSON.stringify(externalOrganizer ? { ...event, organizerEmail: externalOrganizer } : event),
+        receiptPayload(externalOrganizer ? { ...event, organizerEmail: externalOrganizer } : event),
         ...args, ...(externalOrganizer ? [watch.owner, externalOrganizer] : []))),
       this.statement(`UPDATE watches SET synced_at = ?, sync_failed = CASE WHEN sync_failed = 2 THEN 1 ELSE 0 END WHERE id = ? AND ${guard}`, now, watch.id, ...args),
     ]);
