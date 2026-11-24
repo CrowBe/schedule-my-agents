@@ -1,7 +1,11 @@
-import { AppError, ProviderFailure, type Calendar, type CalendarEvent, type CalendarProvider, type Environment, type Watch, type CalendarChange } from './types.ts';
+import { AppError, ProviderFailure, type Calendar, type CalendarEvent, type CalendarProvider, type Environment, type Watch, type CalendarChange, type CalendarAttendee, type WriteBackAction } from './types.ts';
 import { MAX_HORIZON } from '../../shared/alarm.ts';
 import { boundedProbe } from '../../shared/probe-deadline.ts';
+import { normalizeEmail } from './provenance.ts';
+import { digest } from './crypto.ts';
+
 export const SCOPES = ['https://www.googleapis.com/auth/calendar.calendarlist.readonly', 'https://www.googleapis.com/auth/calendar.events.readonly'];
+export const WRITE_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
 const ROOT = 'https://www.googleapis.com/calendar/v3';
 export function readGoogleChange(request:Request):CalendarChange {
   const watchId=request.headers.get('x-goog-channel-id'),token=request.headers.get('x-goog-channel-token'),resourceId=request.headers.get('x-goog-resource-id');
@@ -30,12 +34,35 @@ async function googleFailure(response:Response,signal:AbortSignal,authorization=
   return new ProviderFailure('permanent','Calendar provider rejected this request.');
 }
 export type Fetch = typeof fetch;
-type GoogleEvent = { id: string; summary?: string; description?: string; status?: string; recurrence?: string[]; recurringEventId?: string; originalStartTime?: {dateTime?: string}; start?: {dateTime?: string; date?: string}; end?: {dateTime?: string; date?: string} };
+type GoogleParticipant = { email?: string; self?: boolean; organizer?: boolean; displayName?: string; responseStatus?: string };
+type GoogleEvent = {
+  organizer?: GoogleParticipant; creator?: GoogleParticipant; attendees?: GoogleParticipant[]; attendeesOmitted?: boolean;
+  etag?: string; extendedProperties?: { private?: Record<string, string> };
+  id: string; summary?: string; description?: string; status?: string; recurrence?: string[]; recurringEventId?: string; originalStartTime?: {dateTime?: string}; start?: {dateTime?: string; date?: string}; end?: {dateTime?: string; date?: string} };
+function normalizeAttendee(attendee: GoogleParticipant): CalendarAttendee[] {
+  const email = normalizeEmail(attendee.email);
+  if (!email) return [];
+  const { displayName, responseStatus, organizer, self } = attendee;
+  return [{
+    email, displayName: displayName?.slice(0, 512),
+    responseStatus: responseStatus === 'needsAction' || responseStatus === 'accepted' ||
+      responseStatus === 'tentative' || responseStatus === 'declined' ? responseStatus : undefined,
+    organizer: typeof organizer === 'boolean' ? organizer : undefined, self: typeof self === 'boolean' ? self : undefined,
+  }];
+}
+
+function escapeDescription(value: string) {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
 export function normalize(calendarId: string, item: GoogleEvent): CalendarEvent | null {
   // All-day events do not imply an execution time. Google expands recurrence.
   if (item.status === 'cancelled' || !item.start?.dateTime || !Number.isFinite(Date.parse(item.start.dateTime))) return null;
   return { id: `${calendarId}:${item.id}`, calendarId, provider: 'google', providerEventId: item.id,
     title: item.summary?.slice(0, 512), description: item.description?.slice(0, 8192),
+    ...(item.organizer ? { organizerEmail: normalizeEmail(item.organizer.email) ?? '', organizerSelf: item.organizer.self === true } : {}),
+    ...(item.creator ? { creatorEmail: normalizeEmail(item.creator.email) } : {}),
+    ...(item.attendees ? { attendees: item.attendees.flatMap(normalizeAttendee) } : {}),
     start: item.start.dateTime, end: item.end?.dateTime, status: item.status ?? 'confirmed',
     ...(item.recurringEventId ? { seriesId: item.recurringEventId, recurrenceId: item.originalStartTime?.dateTime && Number.isFinite(Date.parse(item.originalStartTime.dateTime))
       ? new Date(item.originalStartTime.dateTime).toISOString().replace('.000Z','Z') : undefined } : {}) };
@@ -64,15 +91,18 @@ export class GoogleCalendar implements CalendarProvider {
     // Call native fetch as a function, without making this adapter its receiver.
     this.http = (input, init) => http(input, init);
   }
-  private async call(path: string, init: RequestInit = {}, missingIsNull = false, refreshAllowed=true):Promise<unknown> {
+  private async call(path: string, init: RequestInit = {}, missingIsNull = false, refreshAllowed=true, beforeSend?: () => Promise<void>):Promise<unknown> {
+    await beforeSend?.();
     const signal=AbortSignal.timeout(10_000);
+    const headers = new Headers(init.headers);
+    headers.set('Authorization', `Bearer ${this.#accessToken}`);
+    headers.set('Content-Type', 'application/json');
     let response:Response;
-    try {response = await this.http(`${ROOT}${path}`, { ...init, redirect: 'manual', signal,
-      headers: { Authorization: `Bearer ${this.#accessToken}`, 'Content-Type': 'application/json' } });}
+    try {response = await this.http(`${ROOT}${path}`, { ...init, redirect: 'manual', signal, headers });}
     catch {throw new ProviderFailure('transient','Calendar provider is temporarily unavailable.');}
     if(response.status===401 && this.#refreshAccess && refreshAllowed) {
       void response.body?.cancel().catch(()=>{});this.#accessToken=await this.#refreshAccess();
-      return this.call(path,init,missingIsNull,false);
+      return this.call(path,init,missingIsNull,false,beforeSend);
     }
     if (missingIsNull && [404, 410].includes(response.status)) {void response.body?.cancel().catch(()=>{});return null;}
     if (!response.ok) throw await googleFailure(response,signal);
@@ -83,7 +113,7 @@ export class GoogleCalendar implements CalendarProvider {
     for (let page = 0; page < 20; page++) {
       const params = new URLSearchParams({ maxResults: '250', ...(pageToken ? { pageToken } : {}) });
       const data = await this.call(`/users/me/calendarList?${params}`) as { items?: Calendar[]; nextPageToken?: string };
-      results.push(...(data.items ?? []).map(c => ({ id: c.id, summary: c.summary ?? c.id, accessRole: c.accessRole })));
+      results.push(...(data.items ?? []).map(c => ({ id: c.id, summary: c.summary ?? c.id, accessRole: c.accessRole, ...(typeof c.primary === 'boolean' ? { primary: c.primary } : {}) })));
       pageToken = data.nextPageToken; if (!pageToken) return results;
     }
     throw new AppError(422, 'Calendar discovery exceeds the bounded page limit.');
@@ -110,6 +140,45 @@ export class GoogleCalendar implements CalendarProvider {
   async getOccurrence(calendarId: string, eventId: string) {
     const item = await this.call(`/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {}, true) as GoogleEvent | null;
     return item ? normalize(calendarId, item) : null;
+  }
+  async applyWriteBack(calendarId: string, eventId: string, action: WriteBackAction, authorize?: (live: CalendarEvent) => Promise<void>) {
+    const path = `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`;
+    const item = await this.call(path, {}, true) as GoogleEvent | null;
+    const live = item && normalize(calendarId, item);
+    const email = normalizeEmail(action.agentEmail);
+    if (!live || live.providerEventId !== eventId || !email || !item?.attendees || item.attendeesOmitted ||
+      !live.attendees?.some(attendee => attendee.email === email)) {
+      throw new AppError(403, 'This agent is not a guest on a current occurrence.');
+    }
+    let patch: object;
+    if (action.kind === 'rsvp') {
+      patch = { attendees: item.attendees.map(attendee => normalizeEmail(attendee.email) === email
+        ? { ...attendee, responseStatus: action.responseStatus } : attendee) };
+    } else {
+      const note = (action.note ?? '').replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, '').slice(0, 280);
+      const prefix = `[agent-status:${escapeDescription(email)}] `;
+      const statusText = (status: string, text: string) => prefix + status + (text ? ': ' + escapeDescription(text) : '');
+      const line = statusText(action.runStatus, note);
+      const description = item.description ?? '';
+      const lines = description.split('\n');
+      const key = 'agentStatus_' + (await digest(email)).slice(0, 32);
+      const properties = item.extendedProperties?.private;
+      let statusLine = -1;
+      try {
+        const previous = JSON.parse(properties?.[key] ?? 'null');
+        if (typeof previous?.runStatus === 'string' && typeof previous.note === 'string') {
+          statusLine = lines.indexOf(statusText(previous.runStatus, previous.note));
+        }
+      } catch { /* Preserve description text when the prior metadata is unavailable. */ }
+      if (statusLine >= 0) lines[statusLine] = line;
+      patch = {
+        description: statusLine >= 0 ? lines.join('\n') : description + (description && !description.endsWith('\n') ? '\n' : '') + line,
+        extendedProperties: { private: { ...properties, [key]: JSON.stringify({ runStatus: action.runStatus, note }) } },
+      };
+    }
+    await this.call(path, { method: 'PATCH', body: JSON.stringify(patch), headers: item.etag ? { 'If-Match': item.etag } : {} },
+      false, true, authorize ? () => authorize(live) : undefined);
+    return { applied: true as const, kind: action.kind };
   }
   private async listed(path: string, params: URLSearchParams) {
     const results: GoogleEvent[] = [];

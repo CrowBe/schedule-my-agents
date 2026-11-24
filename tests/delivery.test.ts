@@ -57,7 +57,7 @@ function fixture() {
   }
   const DB = {prepare:(q:string)=>new Prepared(q), async batch(statements:Statement[]) { sql.exec('BEGIN'); try { for(const s of statements) await s.run(); sql.exec('COMMIT'); } catch(e) { sql.exec('ROLLBACK'); throw e; } }};
   const env: Environment = {DB,TOKEN_ENCRYPTION_KEY:btoa('a'.repeat(32))};
-  sql.exec("INSERT INTO connections (owner,refresh_token,created_at) VALUES ('alice','encrypted',0); INSERT INTO calendars VALUES ('alice','personal','Personal',1,'g1'); INSERT INTO calendars VALUES ('alice','disabled','Disabled',0,'g2')");
+  sql.exec("INSERT INTO connections (owner,refresh_token,created_at) VALUES ('alice','encrypted',0); INSERT INTO calendars (owner, calendar_id, summary, enabled, generation) VALUES ('alice','personal','Personal',1,'g1'); INSERT INTO calendars (owner, calendar_id, summary, enabled, generation) VALUES ('alice','disabled','Disabled',0,'g2')");
   let now=1791200000000, calls=0;
   let respond: CallbackTransport['post'] = async (_url,body,headers) => {
     calls++; const expected = await signedHeaders(params.delivery.secret, headers['webhook-id'],headers['X-MCP-Subscription-Id'],body,now);
@@ -109,6 +109,19 @@ test('legacy pending receipts remain usable only with the migrated original conn
     assert.equal(calls,replaced?0:1);
     if(replaced) assert.equal((await f.store.first<{status:string}>('SELECT status FROM occurrence_outbox'))?.status,'terminal');
   }
+});
+test('a legacy frozen body retries when the provider starts returning owner participant metadata', async () => {
+  const f = await ready();
+  f.response(async () => new Response(null, { status: 503 }));
+  await assert.rejects(f.dispatch());
+  const frozen = serializeOccurrence('evt_logical', f.event);
+  await f.store.run('UPDATE deliveries SET body = ?', frozen);
+  Object.assign(f.event, { organizerEmail: 'owner@example.com', organizerSelf: true, creatorEmail: 'owner@example.com' });
+  f.setNow(f.now() + 2000);
+  const bodies: string[] = [];
+  f.response(async (_url, body) => { bodies.push(body); return new Response(null, { status: 204 }); });
+  await f.dispatch();
+  assert.deepEqual(bodies, [frozen]);
 });
 test('concurrent dispatch has one lease; crash recovery retains logical identity and bounds attempts',async()=>{
   const f=await ready(); let calls=0, release!:()=>void;

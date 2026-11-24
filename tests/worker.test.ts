@@ -74,7 +74,7 @@ test(`Workers OAuth and discovery: ${scenario}`, async () => {
       return;
     }
     assert.equal(calendars.status, 200, await calendars.clone().text());
-    assert.deepEqual(await calendars.json(), { calendars: [{ id: 'personal', summary: 'Personal', accessRole: 'owner', enabled: false }] });
+    assert.deepEqual(await calendars.json(), { calendars: [{ id: 'personal', summary: 'Personal', accessRole: 'owner', enabled: false, writeBackEnabled: false }], agentAliases: [], allowlist: [], invitations: [] });
   } finally {
     await mf.dispose();
   }
@@ -192,7 +192,7 @@ test('Workers MCP subscription lifecycle with test-only callback transport and r
     const db=await mf.getD1Database('DB');
     for(const file of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort()) for(const statement of readFileSync('drizzle/'+file,'utf8').split('--> statement-breakpoint').filter(s=>s.trim())) await db.prepare(statement).run();
     await db.prepare("INSERT INTO connections (owner,refresh_token,created_at) VALUES ('alice','encrypted',0)").run();
-    await db.prepare("INSERT INTO calendars VALUES ('alice','personal','Personal',1,'g1')").run();
+    await db.prepare("INSERT INTO calendars (owner, calendar_id, summary, enabled, generation) VALUES ('alice','personal','Personal',1,'g1')").run();
     const params={name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example.com/callback',secret:'whsec_'+btoa('s'.repeat(32))}};
     const rpc=async(method:string,owner='alice',transport=true)=> {
       const response=await mf.dispatchFetch('https://bridge.example/mcp',{method:'POST',headers:{'x-authenticated-owner':owner,...(transport?{'test-transport':'true'}:{})},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});
@@ -226,10 +226,10 @@ test('owner subscription removal is authenticated, origin-checked and isolated f
     }
     for (const [owner, calendar] of [['alice', 'personal'], ['alice', 'other'], ['bob', 'personal']]) {
       const id = owner + calendar;
-      await db.prepare('INSERT INTO calendars VALUES (?, ?, ?, 1, ?)').bind(owner, calendar, calendar, 'grant').run();
+      await db.prepare('INSERT INTO calendars (owner, calendar_id, summary, enabled, generation) VALUES (?, ?, ?, 1, ?)').bind(owner, calendar, calendar, 'grant').run();
       await db.prepare('INSERT INTO subscriptions (id, owner, calendar_id, generation, callback_url, secret, expires_at, verified_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)')
         .bind(id, owner, calendar, 'grant', 'https://receiver.example/callback', 'encrypted', Date.now() + 60000, 'revision').run();
-      await db.prepare('INSERT INTO subscription_attempts VALUES (?, ?, ?, ?, ?)').bind(id, owner, calendar, 'revision', Date.now() + 60000).run();
+      await db.prepare('INSERT INTO subscription_attempts (id, owner, calendar_id, revision, expires_at) VALUES (?, ?, ?, ?, ?)').bind(id, owner, calendar, 'revision', Date.now() + 60000).run();
       await db.prepare("INSERT INTO deliveries (outbox_id, subscription_id, owner, calendar_id, body, status, next_at) VALUES (?, ?, ?, ?, ?, 'pending', 0)")
         .bind(id, id, owner, calendar, 'private synthetic payload').run();
     }

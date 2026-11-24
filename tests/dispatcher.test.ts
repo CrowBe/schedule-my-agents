@@ -97,9 +97,9 @@ test('Workers E2E: Google sync → encrypted registration → actual alarm → s
     }
     const owner = 'private-owner';
     await db.prepare('INSERT INTO connections (owner,refresh_token,created_at) VALUES (?, ?, ?)').bind(owner, await seal('refresh', encryption, owner), Date.now()).run();
-    await db.prepare('INSERT INTO calendars VALUES (?, ?, ?, 1, ?)').bind(owner, 'cal', 'Personal', 'grant').run();
+    await db.prepare('INSERT INTO calendars (owner, calendar_id, summary, enabled, generation) VALUES (?, ?, ?, 1, ?)').bind(owner, 'cal', 'Personal', 'grant').run();
     await db.prepare("INSERT INTO watches (id, owner, calendar_id, generation, token_hash, resource_id, expiration, status) VALUES ('watch', ?, 'cal', 'grant', 'hash', 'resource', ?, 'active')").bind(owner, Date.now() + 3600_000).run();
-    for(const [principal, count] of [[owner,1],['other',0]] as const) {
+    for(const [principal, count] of [[owner,2],['other',0]] as const) {
       const catalog = await mf.dispatchFetch('https://site.example/mcp',{method:'POST',headers:{'x-authenticated-owner':principal},body:JSON.stringify({jsonrpc:'2.0',id:2,method:'events/list'})});
       assert.equal(((await catalog.json()) as {result:{events:unknown[]}}).result.events.length,count);
     }

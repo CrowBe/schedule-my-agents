@@ -22,7 +22,11 @@ Failed or overlapping syncs surface a recovery warning until an uncontended resy
 
 Migrations `0006`–`0008` add provider and connection metadata. Existing rows default to Google and an empty connection ID, recognized as a legacy connection using its owner and creation identity. No Google credential is rewritten or decrypted by a migration. New OAuth connections get a random ID.
 
-Existing v1 encrypted alarm fields and Google logical-ID material remain readable. Legacy alarms and receipts are accepted only with their migrated original connection; a newly connected account cannot claim them. Existing callback bodies remain frozen in the delivery ledger. All alarm expiry remains five minutes after occurrence start.
+Existing v1 encrypted alarm fields and Google logical-ID material remain readable. Legacy alarms and receipts are accepted only with their migrated original connection; a newly connected account cannot claim them. Existing callback bodies remain frozen in the delivery ledger. A positive lead time gives an occurrence its own alarm at the requested offset before start. The alarm expires five minutes after its due time.
+
+Migration `0009` adds optional provider participant metadata and per-alias routing. An invitation identifies one calendar grant, connection, provider occurrence or recurrence slot, and registered guest alias. A change of organizer invalidates external approval. The allowlist and approval are checked against the live organizer and attendee before every starting delivery and write-back. Invitation retries use the same encrypted alarm transport and re-read the provider occurrence.
+
+Calendar write-back requires explicit opt-in on an enabled calendar. Google requests its event write scope only with `GOOGLE_WRITE_SCOPE_ENABLED=true`. Reconnect Google after enabling the setting to obtain the new scope, then enable the calendar and its write-back switch. The adapter checks the live guest and applies only that guest's RSVP or a bounded run-status note.
 
 Google recurrence timestamps are normalized to equivalent UTC identities while opaque providers retain their literal slot IDs. Atomic source-occurrence dedup routes equivalent offset-based and canonicalized jobs to the original receipt. Callback instant comparison uses UTC so equivalent start/end offsets do not discard pending work.
 

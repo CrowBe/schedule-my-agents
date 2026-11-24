@@ -64,6 +64,13 @@
       "when": 1791854271679,
       "tag": "0008_watch_connections",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1795550859793,
+      "tag": "0009_vision_mvp",
+      "breakpoints": true
     }
   ]
 }
