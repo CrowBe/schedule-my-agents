@@ -10,6 +10,7 @@ Implemented foundation:
 - Provider-neutral calendar adapter boundary (`lib/calendar/providers.ts`) with a Google Calendar adapter (`lib/calendar/google.ts`, `lib/calendar/google-connection.ts`).
 - Explicit calendar authorization: connecting discovers calendars without enabling them; watches, sync cursors, alarms, receipts, and subscriptions bind to owner, connection identity, calendar grant, and consent generation.
 - Opaque Cloudflare Durable Object alarm dispatcher (`dispatcher/`) for durable timed wakes with a five-minute late window and provider revalidation at wake time.
+- Fail-closed single-user authentication (`lib/calendar/auth.ts`): a signed admin session or admin bearer secret for `/api/*`, and a separate MCP bearer token for `POST /mcp`.
 - Host-agnostic MCP Events endpoint (`POST /mcp`) supporting `server/discover`, `initialize`, `tools/list`, `tools/call` (`enabled_calendars`), `events/list`, `events/subscribe`, and `events/unsubscribe` with persisted subscriptions, signed challenges, and a signed retry outbox over validated-IP direct TLS (`tls-client/`).
 
 Not yet built toward [STRATEGY.md](STRATEGY.md):
@@ -17,8 +18,7 @@ Not yet built toward [STRATEGY.md](STRATEGY.md):
 - Two-phase MCP Events lifecycle (immediate invitation event for agent-side task onboarding plus timed start or lead-time occurrence triggers).
 - Owner-configured allowlist blocking unallowlisted external invite organizers at the integration layer.
 - Structured event provenance in canonical payloads and extensible owner-authorized write-back (RSVP and brief run-status notes).
-- Unattended background watch renewal and missed-push convergence.
-- Self-hosted authentication boundary replacing the reverse-proxy `x-authenticated-owner` header.
+- Wiring `CalendarMaintenance` (`lib/calendar/maintenance.ts`) into `CalendarService.runMaintenance` so the 15-minute cron trigger performs unattended watch renewal and missed-push convergence.
 
 ## Local development
 
@@ -71,6 +71,16 @@ Copy `.env.example` and configure runtime secrets on your self-hosted deployment
 | `ALARM_REGISTRATION_KEY` | Shared HMAC key for alarm registration |
 | `ALARM_CALLBACK_KEY` | Shared HMAC key for alarm wake callbacks |
 | `MCP_EVENTS_READY` | Set to `true` after migrations and transport checks pass to advertise `events/list` |
+| `OWNER_ID` | Stable owner identity for this single-user bridge (default `owner`) |
+| `ADMIN_SECRET` | Setup sign-in secret, also accepted as `Authorization: Bearer` on `/api/*` for scripts (`openssl rand -base64 32`) |
+| `MCP_AUTH_TOKEN` | Bearer token your MCP Events agent host sends to `POST /mcp`; must differ from `ADMIN_SECRET` and never authorizes `/api/*` |
+| `SESSION_SECRET` | Optional session-cookie signing material; defaults to `TOKEN_ENCRYPTION_KEY`, then `ADMIN_SECRET` |
+| `TRUST_PROXY_AUTH_HEADER` | Set to `true` only behind a reverse proxy that strips and sets `x-authenticated-owner`; used when the matching secret above is unset |
+| `GOOGLE_WRITE_SCOPE_ENABLED` | Set to `true` to request the Google write scope for opt-in RSVP and run-status write-back |
+
+Without `ADMIN_SECRET` (or `TRUST_PROXY_AUTH_HEADER=true`) every setup route returns 401, and without `MCP_AUTH_TOKEN` (or proxy trust) `POST /mcp` returns 401. Sign in at `/` with `ADMIN_SECRET`; the session cookie lasts 24 hours. Configure your agent host to send `Authorization: Bearer <MCP_AUTH_TOKEN>`.
+
+The Worker declares a `*/15 * * * *` cron trigger for unattended maintenance: it removes expired OAuth states, subscription attempts, and subscriptions, renews watches you started within 24 hours of expiry, and resyncs watched calendars whose last sync failed or is older than 15 minutes. It never starts a watch you did not start.
 
 Register `<SITE_ORIGIN>/api/google/callback` as the Google OAuth redirect URI. Keep `TOKEN_ENCRYPTION_KEY` and `ALARM_ENCRYPTION_KEY` stable; rotating them without migrating encrypted records invalidates stored credentials or pending alarms.
 
