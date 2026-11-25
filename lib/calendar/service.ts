@@ -463,11 +463,12 @@ export class CalendarService {
     const reply = (result: object) => json({ jsonrpc: '2.0', id: rpc.id ?? null, result: modern ? { resultType: 'complete', ...result } : result });
     const error = (code: number, message: string, status = 200) => json({ jsonrpc: '2.0', id: rpc.id ?? null, error: { code, message } }, status);
     const capabilities = { tools: {} };
-    if (rpc.method === 'server/discover') return reply({ resultType: 'complete', supportedVersions: SUPPORTED_MCP_VERSIONS, capabilities: { ...capabilities, events: {} }, _meta: { 'io.modelcontextprotocol/serverInfo': { name: 'schedule-my-agents', title: 'Schedule my agents', version: '0.1.0' } } });
+    if (rpc.method === 'server/discover') return reply({ resultType: 'complete', supportedVersions: SUPPORTED_MCP_VERSIONS, capabilities: { ...capabilities, events: {}, extensions: { 'io.modelcontextprotocol/events': {} } }, _meta: { 'io.modelcontextprotocol/serverInfo': { name: 'schedule-my-agents', title: 'Schedule my agents', version: '0.1.0' } } });
     if (rpc.method === 'initialize' && !modern) return reply({ protocolVersion: typeof rpc.params?.protocolVersion === 'string' && SUPPORTED_MCP_VERSIONS.slice(1).includes(rpc.params.protocolVersion) ? rpc.params.protocolVersion : '2025-03-26', capabilities, serverInfo: { name: 'schedule-my-agents', version: '0.1.0' } });
     if (rpc.method === 'notifications/initialized') return new Response(null, { status: 202 });
     if (rpc.method === 'ping') return reply({});
-    if (rpc.method === 'tools/list') return reply({ tools });
+    const cacheable = modern ? { ttlMs: 0, cacheScope: 'private' } : {};
+    if (rpc.method === 'tools/list') return reply({ ...cacheable, tools });
     if (rpc.method === 'tools/call') {
       const name = rpc.params?.name, args = rpc.params?.arguments;
       const failure = (message: string) => reply({ isError: true, content: [{ type: 'text', text: message }] });
@@ -484,7 +485,7 @@ export class CalendarService {
     if (rpc.method === 'events/list') {
       const ready = await this.eventCatalogReady(owner);
       const grant = ready && await this.store.connection(owner) && await this.store.first('SELECT calendar_id FROM calendars WHERE owner = ? AND enabled = 1 LIMIT 1', owner);
-      return reply({ events: grant ? eventDefinitions : [] });
+      return reply({ ...cacheable, events: grant ? eventDefinitions : [] });
     }
     if (rpc.method === 'events/subscribe' || rpc.method === 'events/unsubscribe') {
       const subscriptions = new Subscriptions(this.store, this.env, this.now, this.dependencies.callbackTransport);

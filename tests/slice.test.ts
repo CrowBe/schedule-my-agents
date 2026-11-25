@@ -99,7 +99,7 @@ test('MCP discovery publishes modern server identity without exposing account da
   assert.equal(typeof discovered.result._meta?.['io.modelcontextprotocol/serverInfo']?.version, 'string');
   assert.equal(discovered.result.serverInfo, undefined);
   assert.ok(discovered.result.supportedVersions.includes('2026-07-28'));
-  assert.deepEqual(discovered.result.capabilities, {tools:{}, events:{}});
+  assert.deepEqual(discovered.result.capabilities, {tools:{}, events:{}, extensions:{'io.modelcontextprotocol/events':{}}});
   assert.ok(!JSON.stringify(discovered).includes('personal'));
   assert.ok(!JSON.stringify(discovered).includes('alice'));
   const legacy = JSON.parse(await (await f.request('/mcp', {jsonrpc:'2.0',id:2,method:'initialize',params:{protocolVersion:'2025-03-26'}})).text());
@@ -135,9 +135,11 @@ test('modern MCP result envelopes declare complete for tools and events', async 
     assert.equal(response.status,200);
     const result=JSON.parse(await response.text()).result;
     assert.equal(result.resultType,'complete',method);
+    if (method.endsWith('/list')) { assert.equal(result.ttlMs,0,method); assert.equal(result.cacheScope,'private',method); }
   }
   const legacy=JSON.parse(await (await f.request('/mcp',{id:2,method:'tools/list'})).text()).result;
   assert.equal(legacy.resultType,undefined);
+  assert.equal(legacy.ttlMs,undefined);
 });
 test('MCP calendar tool declares read-only behavior and keeps calls scoped to the owner', async () => {
   const f = fixture();
