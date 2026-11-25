@@ -4,21 +4,18 @@
 
 Read [STRATEGY.md](STRATEGY.md) for the approved project vision and accept/resist criteria.
 
-## Current state vs. vision
+## Implemented E2E MVP
 
-Implemented foundation:
-- Provider-neutral calendar adapter boundary (`lib/calendar/providers.ts`) with a Google Calendar adapter (`lib/calendar/google.ts`, `lib/calendar/google-connection.ts`).
-- Explicit calendar authorization: connecting discovers calendars without enabling them; watches, sync cursors, alarms, receipts, and subscriptions bind to owner, connection identity, calendar grant, and consent generation.
-- Opaque Cloudflare Durable Object alarm dispatcher (`dispatcher/`) for durable timed wakes with a five-minute late window and provider revalidation at wake time.
-- Host-agnostic MCP Events endpoint (`POST /mcp`) supporting `server/discover`, `initialize`, `tools/list`, `tools/call` (`enabled_calendars`), `events/list`, `events/subscribe`, and `events/unsubscribe` with persisted subscriptions, signed challenges, and a signed retry outbox over validated-IP direct TLS (`tls-client/`).
+- **Provider-neutral calendar adapter boundary** (`lib/calendar/providers.ts`) with a Google Calendar adapter (`lib/calendar/google.ts`, `lib/calendar/google-connection.ts`) and an opaque second test adapter.
+- **Explicit calendar authorization**: connecting discovers calendars without enabling any of them; watches, sync cursors, alarms, invitations, receipts, and subscriptions bind to owner, connection identity, calendar grant, and consent generation.
+- **Multi-agent guest email aliases & two-phase MCP Events**: register dedicated agent email aliases (`/api/agents/add`, `agent_aliases` tool) and add one or more agents as native calendar guests; each agent receives independent signed deliveries for onboarding (`calendar.event.invited`) and timed execution (`calendar.event.starting`) at start time or a declared `leadTimeMinutes` offset (0–1440).
+- **External invite allowlist & owner approval gate**: only the owner and allowlisted organizers (`/api/allowlist/add`) may invite an agent alias; unallowlisted organizers are blocked at the integration layer, and allowlisted external invites require explicit owner approval (`/api/invitations/approve`) before `calendar.event.starting` or write-back executes.
+- **Structured event provenance & opt-in narrow write-back**: canonical event payloads carry raw title/description alongside structured organizer/approval provenance; per-calendar opt-in write-back (`POST /api/calendars/write-back`, default off) exposes narrowly scoped `calendar_rsvp` and `calendar_run_note` MCP tools.
+- **Opaque durable alarm dispatcher & unattended maintenance**: `dispatcher/` persists encrypted timed wakes with a five-minute late window and live provider revalidation at wake time; `CalendarMaintenance` (`lib/calendar/maintenance.ts`) runs on a `*/15 * * * *` cron trigger (and `POST /api/maintenance/run`) to renew owner-started watches within 24 hours of expiry, converge missed pushes every 15 minutes, and prune expired state.
+- **Fail-closed single-user self-hosted auth** (`lib/calendar/auth.ts`): signed 24-hour `sma_session` cookie or `ADMIN_SECRET` bearer for `/api/*`, and a strictly separate `MCP_AUTH_TOKEN` bearer for `POST /mcp`.
+- **Host-agnostic MCP Events endpoint** (`POST /mcp`): `server/discover`, `initialize`, `tools/list`, `tools/call` (`enabled_calendars`, `agent_aliases`, `calendar_rsvp`, `calendar_run_note`), `events/list`, `events/subscribe`, and `events/unsubscribe` with persisted subscriptions, signed challenges, and a signed retry outbox over validated-IP direct TLS (`tls-client/`).
 
-Not yet built toward [STRATEGY.md](STRATEGY.md):
-- Adding one or more agents via native guest email aliases and routing independent deliveries per agent.
-- Two-phase MCP Events lifecycle (immediate invitation event for agent-side task onboarding plus timed start or lead-time occurrence triggers).
-- Owner-configured allowlist blocking unallowlisted external invite organizers at the integration layer.
-- Structured event provenance in canonical payloads and extensible owner-authorized write-back (RSVP and brief run-status notes).
-- Unattended background watch renewal and missed-push convergence.
-- Self-hosted authentication boundary replacing the reverse-proxy `x-authenticated-owner` header.
+Live hosted verification against production Cloudflare Workers, Google Calendar, and an external MCP Events host remains separate from local/fake-provider automated checks.
 
 ## Local development
 
@@ -71,8 +68,52 @@ Copy `.env.example` and configure runtime secrets on your self-hosted deployment
 | `ALARM_REGISTRATION_KEY` | Shared HMAC key for alarm registration |
 | `ALARM_CALLBACK_KEY` | Shared HMAC key for alarm wake callbacks |
 | `MCP_EVENTS_READY` | Set to `true` after migrations and transport checks pass to advertise `events/list` |
+| `OWNER_ID` | Stable owner identity for this single-user bridge (default `owner`) |
+| `ADMIN_SECRET` | Setup sign-in secret, also accepted as `Authorization: Bearer` on `/api/*` for scripts (`openssl rand -base64 32`) |
+| `MCP_AUTH_TOKEN` | Bearer token your MCP Events agent host sends to `POST /mcp`; must differ from `ADMIN_SECRET` and never authorizes `/api/*` |
+| `SESSION_SECRET` | Optional session-cookie signing material; defaults to `TOKEN_ENCRYPTION_KEY`, then `ADMIN_SECRET` |
+| `TRUST_PROXY_AUTH_HEADER` | Set to `true` only behind a reverse proxy that strips and sets `x-authenticated-owner`; used when the matching secret above is unset |
+| `GOOGLE_WRITE_SCOPE_ENABLED` | Set to `true` to request the Google write scope for opt-in RSVP and run-status write-back |
 
-Register `<SITE_ORIGIN>/api/google/callback` as the Google OAuth redirect URI. Keep `TOKEN_ENCRYPTION_KEY` and `ALARM_ENCRYPTION_KEY` stable; rotating them without migrating encrypted records invalidates stored credentials or pending alarms.
+Without `ADMIN_SECRET` (or `TRUST_PROXY_AUTH_HEADER=true`) every setup route returns 401, and without `MCP_AUTH_TOKEN` (or proxy trust) `POST /mcp` returns 401. Sign in at `/` with `ADMIN_SECRET`; the session cookie lasts 24 hours. Configure your agent host to send `Authorization: Bearer <MCP_AUTH_TOKEN>`.
+
+The Worker declares a `*/15 * * * *` cron trigger for unattended maintenance: it removes expired OAuth states, subscription attempts, and subscriptions, renews watches you started within 24 hours of expiry, and resyncs watched calendars whose last sync failed or is older than 15 minutes. It never starts a watch you did not start.
+
+Register `<SITE_ORIGIN>/api/google/callback` as the Google OAuth redirect URI. Real Google OAuth and provider webhooks require an HTTPS `SITE_ORIGIN`; loopback `http://127.0.0.1` / `http://localhost` origins are accepted for local preview and verification only. Keep `TOKEN_ENCRYPTION_KEY` and `ALARM_ENCRYPTION_KEY` stable; rotating them without migrating encrypted records invalidates stored credentials or pending alarms.
+
+Security notes:
+- `ADMIN_SECRET` and `MCP_AUTH_TOKEN` must be distinct (and `MCP_AUTH_TOKEN` must not match `SESSION_SECRET` / `TOKEN_ENCRYPTION_KEY`); conflicting credentials fail closed across all routes.
+- `MCP_AUTH_TOKEN` is a single host-level bearer token for this single-user bridge; it authorizes MCP discovery, subscriptions, and opt-in write-back tools, never setup routes (`/api/*`).
+- Setting `GOOGLE_WRITE_SCOPE_ENABLED=true` requests Google's account-wide `calendar.events` write scope; keep it `false` unless you want opt-in RSVP and run-status write-back, and enable write-back only on specific calendars.
+- Calendar-wide `calendar.event.starting` subscriptions (without `agentEmail`) only receive owner-organized events; agent subscriptions should always filter by a registered `agentEmail`.
+- On Google Calendar, inviting a `+` alias of the organizer's own Gmail address (for example `owner+agent@gmail.com`) can be collapsed into the organizer and omitted from `attendees`; use a distinct email address for agent guest aliases.
+
+## Self-hosted Cloudflare deployment (`cf`)
+
+Deploy the opaque alarm dispatcher (`dispatcher/`) and bridge Worker to your own Cloudflare account:
+
+```bash
+# 1. Create the D1 database and apply migrations (0000–0009)
+cf d1 create schedule-my-agents-d1
+for f in drizzle/*.sql; do cf d1 query <D1_DATABASE_ID> --file "$f"; done
+
+# 2. Deploy the opaque alarm dispatcher
+cd dispatcher
+CALLBACK_URL=https://<your-bridge-host>/api/alarms/wake cf deploy --env-file ../.cloudflare/dispatcher.env
+cd ..
+
+# 3. Build and deploy the bridge Worker via Build Output Spec v1
+npm run build
+D1_DATABASE_ID=<D1_DATABASE_ID> \
+  SITE_ORIGIN=https://<your-bridge-host> \
+  DISPATCHER_ORIGIN=https://<your-dispatcher-host> \
+  GOOGLE_WEBHOOK_VERIFIED=true \
+  MCP_EVENTS_READY=true \
+  node scripts/prepare-cf-deploy.mjs
+cf deploy --prebuilt --env-file .cloudflare/bridge.env
+```
+
+Keep `.cloudflare/*.env` secret files gitignored and mode `0600`. Verify logged-out `POST <SITE_ORIGIN>/api/google/webhook` returns application HTTP `403` before enabling `GOOGLE_WEBHOOK_VERIFIED=true`.
 
 ## Further reading
 

@@ -37,3 +37,13 @@
 **Callback transport**: The shared connection boundary for subscription verification and event delivery. It validates public destination addresses at connection time, connects to a validated address, and enforces original-hostname TLS verification.
 
 **Delivery attempt**: A leased network attempt for one frozen subscriber and logical event. Its immutable body survives retries; an accepted HTTP 2xx receipt proves delivery only, not agent execution.
+
+**Agent alias**: An owner-registered guest email address identifying an agent that may be invited to calendar events. It holds no task definitions or tool permissions; removing it immediately revokes its subscriptions, invitations, and pending deliveries.
+
+**Invite allowlist**: The owner's explicit list of external organizer email addresses allowed to invite an agent alias. Unallowlisted external organizers are blocked at the integration layer before anything reaches an agent.
+
+**Agent invitation**: A persisted record linking an occurrence (or recurring instance), a registered agent alias, and organizer provenance, used to deduplicate `calendar.event.invited` onboarding deliveries and gate external invites on explicit owner approval.
+
+**Event provenance**: Structured organizer, creator, and approval metadata carried alongside raw untrusted calendar text so the receiving agent host can enforce its own trust policy.
+
+**Write-back**: Narrow, per-calendar opt-in provider updates (`calendar_rsvp` and bounded `calendar_run_note`), off by default and re-authorized against live event state before every write.

@@ -25,10 +25,10 @@ export function calendarFixture(kind: 'google' | 'opaque') {
   catch (error) { sql.exec('ROLLBACK'); throw error; }
  } };
  let now = Date.parse('2026-10-13T02:00:00Z');
- const env: Environment = { DB, SITE_ORIGIN: 'https://site.example', DISPATCHER_ORIGIN: 'https://alarm.example',
+ const env: Environment = { DB, SITE_ORIGIN: 'https://site.example', DISPATCHER_ORIGIN: 'https://alarm.example', TRUST_PROXY_AUTH_HEADER: 'true',
   TOKEN_ENCRYPTION_KEY: btoa('t'.repeat(32)), ALARM_ENCRYPTION_KEY: btoa('e'.repeat(32)), ALARM_CALLBACK_KEY: btoa('c'.repeat(32)), ALARM_REGISTRATION_KEY: btoa('r'.repeat(32)) };
  sql.prepare('INSERT INTO connections (owner,refresh_token,created_at,provider_id,connection_id) VALUES (?,?,?,?,?)').run('owner', 'encrypted', now, kind, `connection-${kind}`);
- sql.prepare('INSERT INTO calendars VALUES (?,?,?,1,?)').run('owner', 'calendar', 'Test', 'grant');
+ sql.prepare('INSERT INTO calendars (owner, calendar_id, summary, enabled, generation) VALUES (?,?,?,1,?)').run('owner', 'calendar', 'Test', 'grant');
  // The second source uses opaque slots, not Google's date-based recurrence identity.
  let source = { uid: 'instance-A', chain: 'series', slot: kind === 'google' ? '2026-10-13T02:01:00Z' : 'opaque-slot-A',
   when: '2026-10-13T02:01:00Z', title: 'Untrusted title', cancelled: false };

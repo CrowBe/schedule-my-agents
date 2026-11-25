@@ -84,7 +84,7 @@ test('Workers E2E: Google sync → encrypted registration → actual alarm → s
   const persist = mkdtempSync(join(tmpdir(), 'signed-delivery-'));
   const create = () => new Miniflare({ cf: false, d1Persist: join(persist,'d1'), durableObjectsPersist: join(persist,'alarms'), workers: [
     { name: 'site', modules: true, script: site, compatibilityDate: '2026-05-15', d1Databases: { DB: 'site-alarm-test' },
-      bindings: { MCP_EVENTS_READY:'true', GOOGLE_WEBHOOK_VERIFIED:'true', SITE_ORIGIN: 'https://site.example', DISPATCHER_ORIGIN: 'https://alarm.example', ALARM_REGISTRATION_KEY: registration, ALARM_CALLBACK_KEY: callback, ALARM_ENCRYPTION_KEY: encryption,
+      bindings: { MCP_EVENTS_READY:'true', GOOGLE_WEBHOOK_VERIFIED:'true', TRUST_PROXY_AUTH_HEADER:'true', SITE_ORIGIN: 'https://site.example', DISPATCHER_ORIGIN: 'https://alarm.example', ALARM_REGISTRATION_KEY: registration, ALARM_CALLBACK_KEY: callback, ALARM_ENCRYPTION_KEY: encryption,
         TOKEN_ENCRYPTION_KEY: encryption, GOOGLE_CLIENT_ID: 'client', GOOGLE_CLIENT_SECRET: 'secret' }, outboundService },
     { name: 'dispatcher', modules: true, script: dispatcher, compatibilityDate: '2026-05-15', durableObjects: { ALARMS: { className: 'Alarm', useSQLite: true } },
       bindings: { REGISTRATION_KEY: registration, CALLBACK_KEY: callback, CALLBACK_URL: 'https://site.example' + CALLBACK_PATH }, outboundService },
@@ -97,9 +97,9 @@ test('Workers E2E: Google sync → encrypted registration → actual alarm → s
     }
     const owner = 'private-owner';
     await db.prepare('INSERT INTO connections (owner,refresh_token,created_at) VALUES (?, ?, ?)').bind(owner, await seal('refresh', encryption, owner), Date.now()).run();
-    await db.prepare('INSERT INTO calendars VALUES (?, ?, ?, 1, ?)').bind(owner, 'cal', 'Personal', 'grant').run();
+    await db.prepare('INSERT INTO calendars (owner, calendar_id, summary, enabled, generation) VALUES (?, ?, ?, 1, ?)').bind(owner, 'cal', 'Personal', 'grant').run();
     await db.prepare("INSERT INTO watches (id, owner, calendar_id, generation, token_hash, resource_id, expiration, status) VALUES ('watch', ?, 'cal', 'grant', 'hash', 'resource', ?, 'active')").bind(owner, Date.now() + 3600_000).run();
-    for(const [principal, count] of [[owner,1],['other',0]] as const) {
+    for(const [principal, count] of [[owner,2],['other',0]] as const) {
       const catalog = await mf.dispatchFetch('https://site.example/mcp',{method:'POST',headers:{'x-authenticated-owner':principal},body:JSON.stringify({jsonrpc:'2.0',id:2,method:'events/list'})});
       assert.equal(((await catalog.json()) as {result:{events:unknown[]}}).result.events.length,count);
     }

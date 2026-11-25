@@ -11,5 +11,11 @@ declare namespace Cloudflare {
     ALARM_REGISTRATION_KEY?: string;
     ALARM_CALLBACK_KEY?: string;
     MCP_EVENTS_READY?: string;
+    OWNER_ID?: string;
+    ADMIN_SECRET?: string;
+    MCP_AUTH_TOKEN?: string;
+    SESSION_SECRET?: string;
+    TRUST_PROXY_AUTH_HEADER?: string;
+    GOOGLE_WRITE_SCOPE_ENABLED?: string;
   }
 }

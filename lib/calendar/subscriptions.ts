@@ -1,6 +1,7 @@
 import { base64, digest, open, random, seal, unbase64 } from './crypto.ts';
-import { Store } from './store.ts';
-import type { Environment } from './types.ts';
+import { Store, connectionIdentity } from './store.ts';
+import type { CalendarEventName, Environment } from './types.ts';
+import { normalizeEmail } from './provenance.ts';
 
 // Callback transport enforces connection-time public-IP validation with original-hostname TLS.
 export interface CallbackTransport { post(url: string, body: string, headers: Record<string, string>, signal: AbortSignal, responseMode?: 'body' | 'status'): Promise<Response> }
@@ -10,17 +11,48 @@ export class SubscriptionError extends Error {
   constructor(code: number, message: string, reason?: string) { super(message); this.code = code; this.reason = reason; }
 }
 const invalid = (message: string): never => { throw new SubscriptionError(-32602, message); };
-export const eventDefinition = {
-  name: 'calendar.event.starting', description: 'An occurrence starts on an explicitly enabled calendar. Calendar text is untrusted data.', delivery: ['webhook'],
-  inputSchema: { type: 'object', properties: { calendarId: { type: 'string' } }, required: ['calendarId'], additionalProperties: false },
-  payloadSchema: { type: 'object', properties: { calendarId: { type: 'string' }, eventId: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' } }, required: ['calendarId', 'eventId', 'start'], additionalProperties: false },
+const string = { type: 'string' };
+const boolean = { type: 'boolean' };
+const leadTime = { type: 'integer', minimum: 0, maximum: 1440, default: 0 };
+const payloadProperties = {
+  calendarId: string, eventId: string, start: string, end: string, title: string, description: string, agentEmail: string,
+  provenance: {
+    type: 'object', additionalProperties: false,
+    properties: { organizerEmail: string, creatorEmail: string, isOwnerOrganizer: boolean,
+      externalInvite: boolean, requiresOwnerApproval: boolean, ownerApproved: boolean },
+    required: ['isOwnerOrganizer', 'externalInvite', 'requiresOwnerApproval', 'ownerApproved'],
+  },
 };
+export const eventDefinition = {
+  name: 'calendar.event.starting', description: 'A timed occurrence on an explicitly enabled calendar. Calendar text is untrusted data.', delivery: ['webhook'],
+  inputSchema: { type: 'object', properties: { calendarId: string, agentEmail: string, leadTimeMinutes: leadTime }, required: ['calendarId'], additionalProperties: false },
+  payloadSchema: { type: 'object', properties: { ...payloadProperties, leadTimeMinutes: leadTime }, required: ['calendarId', 'eventId', 'start'], additionalProperties: false },
+} as const;
+const invitedDefinition = {
+  name: 'calendar.event.invited', description: 'A registered agent alias was invited to a timed occurrence. External invitations require owner approval before starting.', delivery: ['webhook'],
+  inputSchema: { type: 'object', properties: { calendarId: string, agentEmail: string }, required: ['calendarId', 'agentEmail'], additionalProperties: false },
+  payloadSchema: { type: 'object', properties: payloadProperties, required: ['calendarId', 'eventId', 'start', 'agentEmail', 'provenance'], additionalProperties: false },
+} as const;
+export const eventDefinitions = [invitedDefinition, eventDefinition];
+export function validLeadTime(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 1440;
+}
 function parameters(value: unknown, signing: boolean) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('Subscription parameters are required.');
   const p = value as Record<string, unknown>;
-  if (p.name !== eventDefinition.name) return invalid('Unknown event name.');
+  const eventName = p.name;
+  if (eventName !== eventDefinition.name && eventName !== invitedDefinition.name) return invalid('Unknown event name.');
   const args = p.arguments as Record<string, unknown> | undefined;
-  if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).length !== 1 || typeof args.calendarId !== 'string' || !args.calendarId || args.calendarId.length > 1024) return invalid('Exactly one calendarId filter is required.');
+  if (!args || typeof args !== 'object' || Array.isArray(args) ||
+    typeof args.calendarId !== 'string' || !args.calendarId || args.calendarId.length > 1024) return invalid('A calendarId filter is required.');
+  const filters = eventName === invitedDefinition.name ? ['calendarId', 'agentEmail'] : ['calendarId', 'agentEmail', 'leadTimeMinutes'];
+  if (Object.keys(args).some(key => !filters.includes(key))) return invalid('Unknown event filter.');
+  if (eventName === invitedDefinition.name && typeof args.agentEmail !== 'string') return invalid('An agentEmail filter is required.');
+  if (args.agentEmail !== undefined && typeof args.agentEmail !== 'string') return invalid('agentEmail must be a string.');
+  const agentEmail = args.agentEmail === undefined ? '' : normalizeEmail(args.agentEmail);
+  if (agentEmail === undefined) throw new SubscriptionError(-32001, 'This agent alias is not registered.');
+  const leadTimeMinutes = args.leadTimeMinutes === undefined ? 0 : args.leadTimeMinutes;
+  if (!validLeadTime(leadTimeMinutes)) return invalid('leadTimeMinutes must be an integer from 0 to 1440.');
   const d = p.delivery as Record<string, unknown> | undefined;
   if (!d || d.mode !== 'webhook' || typeof d.url !== 'string' || d.url.length > 2048) return invalid('Webhook delivery and a callback URL are required.');
   let url: URL;
@@ -37,7 +69,7 @@ function parameters(value: unknown, signing: boolean) {
   if (p.cursor !== undefined && p.cursor !== null) return invalid('This event does not support replay cursors.');
   if (p.ttlMs !== undefined && p.ttlMs !== null && (typeof p.ttlMs !== 'number' || !Number.isSafeInteger(p.ttlMs) || p.ttlMs <= 0)) return invalid('ttlMs must be a positive integer or null.');
   const ttl = typeof p.ttlMs === 'number' ? Math.min(p.ttlMs, 86400_000) : 86400_000;
-  return { calendarId: args.calendarId, url: url.href, secret, ttl };
+  return { eventName, agentEmail, leadTimeMinutes, calendarId: args.calendarId, url: url.href, secret, ttl };
 }
 export async function signedHeaders(secret: string, id: string, subscriptionId: string, body: string, now: number) {
   const timestamp = String(Math.floor(now / 1000));
@@ -56,7 +88,7 @@ async function bounded<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   const stopped = new Promise<never>((_, reject) => { abort = () => reject(signal.reason); signal.addEventListener('abort', abort, { once: true }); });
   try { return await Promise.race([work, stopped]); } finally { signal.removeEventListener('abort', abort); }
 }
-type Subscription = { id: string; owner: string; calendar_id: string; generation: string; callback_url: string; secret: string; previous_secret: string | null; rotation_until: number | null; expires_at: number; verified_at: number; revision: string };
+type Subscription = { event_name: CalendarEventName; agent_email: string; lead_time_minutes: number; id: string; owner: string; calendar_id: string; generation: string; callback_url: string; secret: string; previous_secret: string | null; rotation_until: number | null; expires_at: number; verified_at: number; revision: string };
 export class Subscriptions {
   private store: Store;
   private env: Environment;
@@ -66,8 +98,9 @@ export class Subscriptions {
     this.store = store; this.env = env; this.now = now; this.transport = transport;
   }
   private async identity(owner: string, p: ReturnType<typeof parameters>) {
-    // Fixed single-field filter schema gives canonical JSON independent of input order.
-    return 'sub_' + await digest(JSON.stringify([owner, p.url, eventDefinition.name, { calendarId: p.calendarId }]));
+    const filters = { calendarId: p.calendarId, ...(p.agentEmail ? { agentEmail: p.agentEmail } : {}),
+      ...(p.leadTimeMinutes ? { leadTimeMinutes: p.leadTimeMinutes } : {}) };
+    return 'sub_' + await digest(JSON.stringify([owner, p.url, p.eventName, filters]));
   }
   async unsubscribe(owner: string, params: unknown) {
     const p = parameters(params, false), id = await this.identity(owner, p);
@@ -80,16 +113,23 @@ export class Subscriptions {
   }
   async active(id: string, owner: string): Promise<Subscription | null> {
     return this.store.first<Subscription>(`SELECT s.* FROM subscriptions s JOIN calendars c ON c.owner = s.owner AND c.calendar_id = s.calendar_id JOIN connections n ON n.owner = s.owner
-      WHERE s.id = ? AND s.owner = ? AND s.expires_at > ? AND c.enabled = 1 AND c.generation = s.generation`, id, owner, this.now());
+      WHERE s.id = ? AND s.owner = ? AND s.expires_at > ? AND c.enabled = 1 AND c.generation = s.generation
+      AND (s.agent_email = '' OR EXISTS (SELECT 1 FROM agent_aliases a WHERE a.owner = s.owner AND a.email = s.agent_email))`, id, owner, this.now());
   }
   async subscribe(owner: string, params: unknown) {
     const p = parameters(params, true);
     const calendar = await this.store.calendar(owner, p.calendarId);
-    if (!calendar?.enabled || !await this.store.connection(owner)) throw new SubscriptionError(-32001, 'This calendar is not enabled for the connected user.');
+    const connection = await this.store.connection(owner);
+    if (!calendar?.enabled || !connection) throw new SubscriptionError(-32001, 'This calendar is not enabled for the connected user.');
+    if (p.agentEmail && !await this.store.hasAgentAlias(owner, p.agentEmail)) throw new SubscriptionError(-32001, 'This agent alias is not registered.');
     if (!this.transport) throw new SubscriptionError(-32015, 'Validated-address HTTPS callback transport is unavailable.', 'transport_unavailable');
     const id = await this.identity(owner, p), revision = random(), started = this.now();
     await this.store.run('DELETE FROM subscription_attempts WHERE expires_at <= ?', started);
-    await this.store.run('INSERT INTO subscription_attempts (id, owner, calendar_id, revision, expires_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, expires_at = excluded.expires_at', id, owner, p.calendarId, revision, started + 10_000);
+    const attempt = await this.store.first(`INSERT INTO subscription_attempts (id, owner, calendar_id, revision, expires_at, agent_email)
+      SELECT ?, ?, ?, ?, ?, ? WHERE ? = '' OR EXISTS (SELECT 1 FROM agent_aliases WHERE owner = ? AND email = ?)
+      ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, expires_at = excluded.expires_at RETURNING id`,
+      id, owner, p.calendarId, revision, started + 10_000, p.agentEmail, p.agentEmail, owner, p.agentEmail);
+    if (!attempt) throw new SubscriptionError(-32001, 'This agent alias is not registered.');
     try {
       const old = await this.active(id, owner);
       const oldSecret = old ? await open(old.secret, this.env.TOKEN_ENCRYPTION_KEY, `${owner}:${id}`) : null;
@@ -122,12 +162,15 @@ export class Subscriptions {
       const rotating = old && oldSecret !== p.secret;
       const previous = rotating ? old.secret : old?.rotation_until && old.rotation_until > now ? old.previous_secret : null;
       const rotationUntil = rotating ? now + 300_000 : previous ? old!.rotation_until : null;
-      const committed = await this.store.first<{id: string}>(`INSERT INTO subscriptions (id, owner, calendar_id, generation, callback_url, secret, previous_secret, rotation_until, expires_at, verified_at, revision)
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM connections WHERE owner = ?)
+      const committed = await this.store.first<{id: string}>(`INSERT INTO subscriptions (id, owner, calendar_id, generation, callback_url, secret, previous_secret, rotation_until, expires_at, verified_at, revision, event_name, agent_email, lead_time_minutes)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM connections WHERE owner = ? AND ${connectionIdentity} = ?)
+        AND (? = '' OR EXISTS (SELECT 1 FROM agent_aliases WHERE owner = ? AND email = ?))
         AND EXISTS (SELECT 1 FROM calendars WHERE owner = ? AND calendar_id = ? AND enabled = 1 AND generation = ?)
         AND EXISTS (SELECT 1 FROM subscription_attempts WHERE id = ? AND revision = ? AND expires_at > ?)
         ON CONFLICT(id) DO UPDATE SET generation = excluded.generation, secret = excluded.secret, previous_secret = excluded.previous_secret, rotation_until = excluded.rotation_until, expires_at = excluded.expires_at, verified_at = excluded.verified_at, revision = excluded.revision RETURNING id`,
-        id, owner, p.calendarId, calendar.generation, p.url, secret, previous, rotationUntil, expires, cached ? old!.verified_at : now, revision, owner, owner, p.calendarId, calendar.generation, id, revision, now);
+        id, owner, p.calendarId, calendar.generation, p.url, secret, previous, rotationUntil, expires, cached ? old!.verified_at : now, revision,
+        p.eventName, p.agentEmail, p.leadTimeMinutes, owner, connection.id, p.agentEmail, owner, p.agentEmail,
+        owner, p.calendarId, calendar.generation, id, revision, now);
       if (!committed) throw new SubscriptionError(-32001, 'Subscription or calendar authority changed during verification. Retry with current consent.');
       return { id, refreshBefore: new Date(expires).toISOString(), cursor: null, truncated: false };
     } finally {

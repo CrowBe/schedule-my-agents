@@ -23,13 +23,13 @@ function fixture() {
     async run() { return sql.prepare(this.query).run(...this.values); }
   }
   const DB = { prepare: (q: string) => new Prepared(q), async batch(s: Statement[]) { sql.exec('BEGIN'); try { for (const p of s) await p.run(); sql.exec('COMMIT'); } catch (e) { sql.exec('ROLLBACK'); throw e; } } };
-  const env: Environment = { DB, SITE_ORIGIN: 'https://site.example', DISPATCHER_ORIGIN: 'https://alarm.example',
+  const env: Environment = { DB, SITE_ORIGIN: 'https://site.example', DISPATCHER_ORIGIN: 'https://alarm.example', TRUST_PROXY_AUTH_HEADER: 'true',
     ALARM_ENCRYPTION_KEY: btoa('e'.repeat(32)), ALARM_CALLBACK_KEY: btoa('c'.repeat(32)), ALARM_REGISTRATION_KEY: btoa('r'.repeat(32)) };
   let now = Date.parse('2026-10-06T23:00:00Z');
   let event: CalendarEvent | null = normalize('private-calendar', { id: 'private-event', summary: 'Secret appointment', start: { dateTime: new Date(now + 60_000).toISOString() } })!;
   const store = new Store(DB);
   sql.prepare('INSERT INTO connections (owner,refresh_token,created_at) VALUES (?, ?, ?)').run('private-owner', 'encrypted-refresh', now);
-  sql.prepare('INSERT INTO calendars VALUES (?, ?, ?, 1, ?)').run('private-owner', 'private-calendar', 'Personal', 'grant-1');
+  sql.prepare('INSERT INTO calendars (owner, calendar_id, summary, enabled, generation) VALUES (?, ?, ?, 1, ?)').run('private-owner', 'private-calendar', 'Personal', 'grant-1');
   const jobs: AlarmJob[] = []; let failure = false; let lookupHook = async () => {};
   let next: CalendarEvent | null = null; let successors = 0;
   const provider: CalendarProvider = {

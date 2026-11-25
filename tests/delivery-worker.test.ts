@@ -16,7 +16,7 @@ test('Workers/D1 revocation races during provider revalidation prevent signed di
     const lookup=new Promise<void>(r=>arrived=r), blocked=new Promise<void>(r=>release=r);
     let fixtureNow=Date.now(),dueAt=fixtureNow+5000;
     const event={id:'one',summary:'Synthetic race test',start:{dateTime:new Date(dueAt).toISOString()},status:'confirmed'};
-    const mf=new Miniflare({modules:true,script,compatibilityDate:'2026-05-15',cf:false,d1Databases:{DB:'race-'+action},bindings:{SITE_ORIGIN:'https://site.example',TOKEN_ENCRYPTION_KEY:encryption,GOOGLE_CLIENT_ID:'client',GOOGLE_CLIENT_SECRET:'secret',DISPATCHER_ORIGIN:'https://alarm.example',ALARM_ENCRYPTION_KEY:encryption,ALARM_REGISTRATION_KEY:registration,ALARM_CALLBACK_KEY:callback},outboundService:async(request)=>{
+    const mf=new Miniflare({modules:true,script,compatibilityDate:'2026-05-15',cf:false,d1Databases:{DB:'race-'+action},bindings:{SITE_ORIGIN:'https://site.example',TRUST_PROXY_AUTH_HEADER:'true',TOKEN_ENCRYPTION_KEY:encryption,GOOGLE_CLIENT_ID:'client',GOOGLE_CLIENT_SECRET:'secret',DISPATCHER_ORIGIN:'https://alarm.example',ALARM_ENCRYPTION_KEY:encryption,ALARM_REGISTRATION_KEY:registration,ALARM_CALLBACK_KEY:callback},outboundService:async(request)=>{
       const url=new URL(request.url);
       if(url.origin==='https://receiver.example'){const data=JSON.parse(await request.text());if(data.type==='verification')return Response.json({challenge:data.challenge});delivered++;return new Response(null,{status:503});}
       if(url.origin==='https://alarm.example'){job=await request.json() as AlarmJob;return Response.json({registered:true,id:job.id});}
@@ -29,7 +29,7 @@ test('Workers/D1 revocation races during provider revalidation prevent signed di
     try {
       const db=await mf.getD1Database('DB');for(const file of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())for(const sql of readFileSync('drizzle/'+file,'utf8').split('--> statement-breakpoint').filter(s=>s.trim()))await db.prepare(sql).run();
       await db.prepare('INSERT INTO connections (owner,refresh_token,created_at) VALUES (?, ?, ?)').bind('alice',await seal('refresh',encryption,'alice'),Date.now()).run();
-      await db.prepare("INSERT INTO calendars VALUES ('alice','personal','Personal',1,'g1')").run();
+      await db.prepare("INSERT INTO calendars (owner, calendar_id, summary, enabled, generation) VALUES ('alice','personal','Personal',1,'g1')").run();
       await db.prepare("INSERT INTO watches (id,owner,calendar_id,generation,token_hash,resource_id,expiration,status) VALUES ('watch','alice','personal','g1','hash','resource',?,'active')").bind(Date.now()+3600_000).run();
       const params={name:'calendar.event.starting',arguments:{calendarId:'personal'},delivery:{mode:'webhook',url:'https://receiver.example/callback',secret:'whsec_'+btoa('s'.repeat(32))}};
       const call=(path:string,body:unknown)=>mf.dispatchFetch('https://site.example'+path,{method:'POST',headers:{origin:'https://site.example','x-authenticated-owner':'alice','x-fixture-now':String(fixtureNow)},body:JSON.stringify(body)});
