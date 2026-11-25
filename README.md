@@ -86,6 +86,34 @@ Security notes:
 - `MCP_AUTH_TOKEN` is a single host-level bearer token for this single-user bridge; it authorizes MCP discovery, subscriptions, and opt-in write-back tools, never setup routes (`/api/*`).
 - Setting `GOOGLE_WRITE_SCOPE_ENABLED=true` requests Google's account-wide `calendar.events` write scope; keep it `false` unless you want opt-in RSVP and run-status write-back, and enable write-back only on specific calendars.
 - Calendar-wide `calendar.event.starting` subscriptions (without `agentEmail`) only receive owner-organized events; agent subscriptions should always filter by a registered `agentEmail`.
+- On Google Calendar, inviting a `+` alias of the organizer's own Gmail address (for example `owner+agent@gmail.com`) can be collapsed into the organizer and omitted from `attendees`; use a distinct email address for agent guest aliases.
+
+## Self-hosted Cloudflare deployment (`cf`)
+
+Deploy the opaque alarm dispatcher (`dispatcher/`) and bridge Worker to your own Cloudflare account:
+
+```bash
+# 1. Create the D1 database and apply migrations (0000–0009)
+cf d1 create schedule-my-agents-d1
+for f in drizzle/*.sql; do cf d1 query <D1_DATABASE_ID> --file "$f"; done
+
+# 2. Deploy the opaque alarm dispatcher
+cd dispatcher
+CALLBACK_URL=https://<your-bridge-host>/api/alarms/wake cf deploy --env-file ../.cloudflare/dispatcher.env
+cd ..
+
+# 3. Build and deploy the bridge Worker via Build Output Spec v1
+npm run build
+D1_DATABASE_ID=<D1_DATABASE_ID> \
+  SITE_ORIGIN=https://<your-bridge-host> \
+  DISPATCHER_ORIGIN=https://<your-dispatcher-host> \
+  GOOGLE_WEBHOOK_VERIFIED=true \
+  MCP_EVENTS_READY=true \
+  node scripts/prepare-cf-deploy.mjs
+cf deploy --prebuilt --env-file .cloudflare/bridge.env
+```
+
+Keep `.cloudflare/*.env` secret files gitignored and mode `0600`. Verify logged-out `POST <SITE_ORIGIN>/api/google/webhook` returns application HTTP `403` before enabling `GOOGLE_WEBHOOK_VERIFIED=true`.
 
 ## Further reading
 

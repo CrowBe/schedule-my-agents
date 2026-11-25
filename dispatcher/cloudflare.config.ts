@@ -12,7 +12,7 @@ export default defineConfig({
       ALARMS: bindings.durableObject({ worker: 'calendar-opaque-alarms', exportName: 'Alarm' }),
       REGISTRATION_KEY: bindings.secret(),
       CALLBACK_KEY: bindings.secret(),
-      CALLBACK_URL: bindings.text('https://calendar.example.com/api/alarms/wake'),
+      CALLBACK_URL: bindings.text(process.env.CALLBACK_URL ?? 'https://calendar.example.com/api/alarms/wake'),
     },
     observability: { enabled: true, logs: { enabled: true, invocationLogs: false } },
   },
